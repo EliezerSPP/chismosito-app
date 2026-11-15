@@ -1,0 +1,435 @@
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import {
+  AlertTriangle,
+  ArrowLeft,
+  CloudUpload,
+  ExternalLink,
+  FileAudio,
+  Folder,
+  Loader2,
+  Pencil,
+  RefreshCw,
+  Sparkles,
+  Tag,
+  Trash2
+} from 'lucide-react'
+import type { NoteDetail } from '@shared/types'
+import { useAppStore } from '../store'
+import { DurationBadge, StatusBadge } from '../components/StatusBadge'
+import { DriveIcon } from '../components/NoteRow'
+import { TranscriptView } from '../components/TranscriptView'
+import { EditNoteModal } from '../components/EditNoteModal'
+import { ConfirmDialog } from '../components/ConfirmDialog'
+import { ProgressBar } from '../components/ProgressBar'
+import { noteDateLabel, formatDuration } from '../lib/format'
+import { errorMessage } from '../lib/errors'
+import { cn } from '../lib/cn'
+
+export function NotePage(): React.JSX.Element {
+  const [searchParams] = useSearchParams()
+  const path = searchParams.get('path') ?? ''
+  const navigate = useNavigate()
+  const notesRevision = useAppStore((state) => state.notesRevision)
+  const folders = useAppStore((state) => state.folders)
+  const jobs = useAppStore((state) => state.jobs)
+  const drive = useAppStore((state) => state.drive)
+  const env = useAppStore((state) => state.env)
+  const pushToast = useAppStore((state) => state.pushToast)
+  const refreshNotes = useAppStore((state) => state.refreshNotes)
+
+  const [note, setNote] = useState<NoteDetail | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [editOpen, setEditOpen] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [confirmRegenerate, setConfirmRegenerate] = useState(false)
+  const [busyBackup, setBusyBackup] = useState(false)
+  const [busyRegenerate, setBusyRegenerate] = useState(false)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+
+  const load = useCallback(async (): Promise<void> => {
+    if (!path) {
+      setError('No se indicó una nota')
+      setLoading(false)
+      return
+    }
+    try {
+      const detail = await window.chismosito.notes.get(path)
+      if (!detail) {
+        setError('La nota no existe o fue movida')
+        setNote(null)
+      } else {
+        setNote(detail)
+        setError(null)
+      }
+    } catch (loadError) {
+      setError(errorMessage(loadError))
+    } finally {
+      setLoading(false)
+    }
+  }, [path])
+
+  useEffect(() => {
+    void load()
+  }, [load, notesRevision])
+
+  const job = jobs.find((entry) => entry.notePath === path)
+  const jobActive = Boolean(job && !['done', 'failed', 'cancelled'].includes(job.stage))
+  const processing = note?.status === 'processing' || jobActive
+
+  if (loading) {
+    return (
+      <div className="mx-auto max-w-4xl px-8 py-10">
+        <div className="shimmer h-5 w-28 rounded-lg" />
+        <div className="shimmer mt-4 h-10 w-3/4 rounded-xl" />
+        <div className="shimmer mt-3 h-4 w-1/2 rounded-lg" />
+        <div className="shimmer mt-8 h-24 rounded-2xl" />
+        <div className="shimmer mt-6 h-64 rounded-3xl" />
+      </div>
+    )
+  }
+
+  if (!note) {
+    return (
+      <div className="mx-auto flex min-h-[70vh] max-w-lg flex-col items-center justify-center gap-4 px-8 text-center">
+        <AlertTriangle className="size-8 text-gold" />
+        <h1 className="font-serif text-2xl">{error ?? 'Nota no encontrada'}</h1>
+        <Link to="/library" className="btn-secondary">
+          Volver a la biblioteca
+        </Link>
+      </div>
+    )
+  }
+
+  const transcriptIndex = note.content.indexOf('## Transcripción')
+  const beforeTranscript = transcriptIndex >= 0 ? note.content.slice(0, transcriptIndex) : note.content
+  const summaryContent = beforeTranscript.replace(/^#\s+.*(?:\r?\n)+/, '').trim()
+  const separator = note.path.includes('\\') ? '\\' : '/'
+  const directory = note.path.slice(0, note.path.lastIndexOf(separator))
+  const audioSrc = note.audio
+    ? `chismosito-media://local/?path=${encodeURIComponent(`${directory}${separator}${note.audio}`)}`
+    : null
+
+  const seek = (seconds: number): void => {
+    const audio = audioRef.current
+    if (!audio) return
+    audio.currentTime = seconds
+    void audio.play().catch(() => undefined)
+  }
+
+  const fixAudioDuration = (event: React.SyntheticEvent<HTMLAudioElement>): void => {
+    const audio = event.currentTarget
+    if (Number.isFinite(audio.duration)) return
+    const onDuration = (): void => {
+      audio.removeEventListener('durationchange', onDuration)
+      try {
+        audio.currentTime = 0
+      } catch {
+        // ignore
+      }
+    }
+    audio.addEventListener('durationchange', onDuration)
+    try {
+      audio.currentTime = 1e101
+    } catch {
+      // Some Chromium versions reject the seek; the metadata duration is still shown below.
+    }
+  }
+
+  const backup = async (): Promise<void> => {
+    setBusyBackup(true)
+    try {
+      await window.chismosito.drive.backupNote(note.path)
+      await load()
+    } catch (backupError) {
+      pushToast('error', errorMessage(backupError))
+    } finally {
+      setBusyBackup(false)
+    }
+  }
+
+  const regenerate = async (): Promise<void> => {
+    setBusyRegenerate(true)
+    try {
+      await window.chismosito.notes.resummarize(note.path)
+      await load()
+    } catch (regenerateError) {
+      pushToast('error', errorMessage(regenerateError))
+    } finally {
+      setBusyRegenerate(false)
+    }
+  }
+
+  const remove = async (): Promise<void> => {
+    try {
+      await window.chismosito.notes.remove(note.path)
+      await refreshNotes()
+      navigate('/library')
+      pushToast('success', 'Nota enviada a la papelera')
+    } catch (removeError) {
+      pushToast('error', errorMessage(removeError))
+    }
+  }
+
+  return (
+    <div className="mx-auto w-full max-w-4xl px-7 pb-16 pt-7 lg:px-10">
+      <div className="mb-5 flex items-center justify-between gap-3">
+        <button onClick={() => navigate(-1)} className="btn-ghost h-8 px-2 text-xs">
+          <ArrowLeft className="size-4" />
+          Volver
+        </button>
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => setEditOpen(true)}
+            disabled={processing}
+            className="btn-secondary h-8 px-3 text-[11px] disabled:opacity-40"
+            title={processing ? 'Espera a que termine el procesamiento' : 'Editar título, etiquetas o carpeta'}
+          >
+            <Pencil className="size-3.5" /> Editar
+          </button>
+          {drive?.connected ? (
+            <button
+              onClick={() => void backup()}
+              disabled={busyBackup || processing}
+              className="btn-secondary h-8 px-3 text-[11px]"
+              title={processing ? 'Espera a que termine el procesamiento' : 'Respaldar nota y audio en Google Drive'}
+            >
+              {busyBackup ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <CloudUpload className="size-3.5" />
+              )}
+              Respaldar
+            </button>
+          ) : null}
+          <button
+            onClick={() => void window.chismosito.notes.reveal(note.path)}
+            className="btn-ghost h-8 w-8 p-0"
+            title="Mostrar en Explorer"
+            aria-label="Mostrar en Explorer"
+          >
+            <ExternalLink className="size-4" />
+          </button>
+          <button
+            onClick={() => setConfirmDelete(true)}
+            disabled={processing}
+            className="btn-ghost h-8 w-8 p-0 text-red-600 hover:bg-red-50 hover:text-red-700 disabled:opacity-40 dark:text-red-300 dark:hover:bg-red-950/40"
+            title={processing ? 'Espera a que termine el procesamiento' : 'Eliminar nota'}
+            aria-label="Eliminar nota"
+          >
+            <Trash2 className="size-4" />
+          </button>
+        </div>
+      </div>
+
+      <header>
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <StatusBadge status={note.status} />
+          <DriveIcon status={note.drive} error={note.driveError} />
+          {note.folder ? (
+            <span className="chip">
+              <Folder className="size-3" /> {note.folder}
+            </span>
+          ) : null}
+          <DurationBadge seconds={note.durationSeconds} />
+        </div>
+        <h1 className="font-serif text-4xl leading-[1.1] tracking-tight lg:text-[44px]">
+          {note.title}
+        </h1>
+        <p className="mt-2 text-sm text-muted">
+          {noteDateLabel(note.date)}
+          {note.language ? ` · ${note.language.toUpperCase()}` : ''}
+          {note.llm ? ` · resumen con ${note.llm}` : ''}
+        </p>
+        {note.tags.length > 0 ? (
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            {note.tags.map((tag) => (
+              <span key={tag} className="chip">
+                <Tag className="size-3" />
+                {tag}
+              </span>
+            ))}
+          </div>
+        ) : null}
+      </header>
+
+      {jobActive ? (
+        <div className="mt-6 rounded-2xl border border-line bg-surface p-4">
+          <div className="flex items-center gap-3">
+            <Loader2 className="size-4 animate-spin text-accent" />
+            <p className="text-sm font-medium">{job?.message || 'Procesando la reunión…'}</p>
+            <span className="ml-auto text-[11px] tabular-nums text-muted">
+              {Math.round(job?.progress ?? 0)}%
+            </span>
+          </div>
+          <ProgressBar value={job?.progress ?? 0} className="mt-3 h-1.5" />
+        </div>
+      ) : null}
+
+      {note.status === 'summary_failed' ? (
+        <div className="mt-4 rounded-2xl border border-[color-mix(in_srgb,var(--gold)_35%,transparent)] bg-[color-mix(in_srgb,var(--gold)_10%,transparent)] p-4">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="mt-0.5 size-4 shrink-0 text-gold" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium">La transcripción está lista, pero falta el resumen</p>
+              <p className="mt-0.5 text-xs leading-relaxed text-muted">
+                {env?.llm.configured
+                  ? job?.error || 'El modelo no respondió. Puedes intentarlo de nuevo.'
+                  : 'Configura OPENCODE_API_KEY en el .env para generar el resumen.'}
+              </p>
+              <div className="mt-2 flex flex-wrap gap-3 text-[11px] font-medium">
+                {env?.llm.configured ? (
+                  <button
+                    onClick={() => setConfirmRegenerate(true)}
+                    className="text-accent hover:underline"
+                  >
+                    Regenerar resumen
+                  </button>
+                ) : (
+                  <Link to="/settings?section=llm" className="text-accent hover:underline">
+                    Configurar API key
+                  </Link>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {note.status === 'transcription_failed' ? (
+        <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-4 dark:border-red-900/60 dark:bg-red-950/30">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="mt-0.5 size-4 shrink-0 text-red-600 dark:text-red-300" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium text-red-800 dark:text-red-200">
+                No se pudo transcribir esta reunión
+              </p>
+              <p className="mt-0.5 text-xs leading-relaxed text-red-700/90 dark:text-red-300/90">
+                {job?.error ||
+                  'Revisa que el modelo esté descargado y vuelve a grabar si el audio no se conservó.'}
+              </p>
+              {job ? (
+                <button
+                  onClick={() => void window.chismosito.jobs.retry(job.id)}
+                  className="mt-2 text-[11px] font-medium text-red-700 underline hover:no-underline dark:text-red-300"
+                >
+                  Reintentar procesamiento
+                </button>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {note.status === 'cancelled' ? (
+        <div className="mt-4 rounded-2xl border border-line bg-surface2 p-4 text-sm text-muted">
+          El procesamiento de esta nota se canceló. El audio original sigue disponible.
+        </div>
+      ) : null}
+
+      {audioSrc ? (
+        <section className="mt-6 rounded-2xl border border-line bg-surface p-4">
+          <div className="flex items-center gap-3">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-accent-soft text-accent">
+              <FileAudio className="size-4" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium">Audio original</p>
+              <p className="truncate text-[11px] text-muted">
+                {note.audio} · {formatDuration(note.durationSeconds)}
+              </p>
+            </div>
+            <span className="text-[10px] uppercase tracking-wider text-muted">WebM · Opus</span>
+          </div>
+          <audio
+            ref={audioRef}
+            controls
+            preload="metadata"
+            src={audioSrc}
+            onLoadedMetadata={fixAudioDuration}
+            className="mt-3 w-full"
+          />
+        </section>
+      ) : (
+        <div className="mt-6 rounded-2xl border border-dashed border-line px-4 py-3 text-xs text-muted">
+          El archivo de audio ya no está junto a esta nota.
+        </div>
+      )}
+
+      <article className="md mt-8">
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{summaryContent}</ReactMarkdown>
+      </article>
+
+      <div className="mt-9 border-t border-line pt-6">
+        <div className="mb-3 flex items-end justify-between gap-3">
+          <div>
+            <h2 className="font-serif text-2xl">Transcripción</h2>
+            <p className="mt-0.5 text-[11px] text-muted">
+              {note.transcript.length} fragmentos · haz clic en un tiempo para escuchar ese momento
+            </p>
+          </div>
+          {note.transcript.length > 0 ? (
+            <button
+              onClick={() => setConfirmRegenerate(true)}
+              disabled={busyRegenerate || !env?.llm.configured || jobActive}
+              className={cn('btn-ghost h-8 px-2 text-[11px]', !env?.llm.configured && 'hidden')}
+              title="Volver a generar resumen, decisiones y acciones"
+            >
+              {busyRegenerate ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="size-3.5" />
+              )}
+              Regenerar resumen
+            </button>
+          ) : null}
+        </div>
+
+        {note.status === 'processing' && note.transcript.length === 0 ? (
+          <div className="flex items-center gap-3 rounded-2xl border border-line bg-surface px-4 py-5 text-sm text-muted">
+            <Sparkles className="size-4 animate-pulse text-accent" />
+            La transcripción aparecerá aquí cuando termine el procesamiento.
+          </div>
+        ) : (
+          <TranscriptView lines={note.transcript} onSeek={seek} />
+        )}
+      </div>
+
+      <EditNoteModal
+        open={editOpen}
+        note={note}
+        folders={folders}
+        onClose={() => setEditOpen(false)}
+        onSaved={(updated) => {
+          if (updated.path !== path) {
+            navigate(`/note?path=${encodeURIComponent(updated.path)}`, { replace: true })
+          } else {
+            setNote(updated)
+          }
+        }}
+      />
+
+      <ConfirmDialog
+        open={confirmDelete}
+        title="¿Eliminar esta nota?"
+        description="La nota y su audio se moverán a la papelera de Windows."
+        confirmLabel="Eliminar"
+        destructive
+        onClose={() => setConfirmDelete(false)}
+        onConfirm={() => void remove()}
+      />
+
+      <ConfirmDialog
+        open={confirmRegenerate}
+        title="Regenerar resumen"
+        description="Se volverá a llamar al LLM con la transcripción completa. Esto puede tardar unos segundos y consumir tokens."
+        confirmLabel="Regenerar"
+        onClose={() => setConfirmRegenerate(false)}
+        onConfirm={() => void regenerate()}
+      />
+    </div>
+  )
+}

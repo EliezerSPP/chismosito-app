@@ -1,0 +1,278 @@
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { existsSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
+import { isAbsolute, resolve } from 'node:path'
+import type {
+  AppEvent,
+  AppInfo,
+  AppSettings,
+  DriveBackupSummary,
+  DriveStatus,
+  EnvStatus,
+  LlmTestResult,
+  NoteDetail,
+  NoteMeta,
+  NoteUpdateInput,
+  RecordingStartInput,
+  RecordingStartResult,
+  RecordingStateUpdate,
+  RecordingStopInput,
+  WhisperStatus
+} from '@shared/types'
+import { IPC } from '@shared/constants'
+import type { SettingsStore } from './settings'
+import type { NoteRepository } from './notes/repository'
+import type { JobRunner } from './jobs/runner'
+import type { RecordingSessionManager } from './audio/session'
+import type { WhisperManager } from './whisper/manager'
+import type { LlmClient } from './llm/summarizer'
+import type { DriveManager } from './drive/manager'
+import { getEnv } from './env'
+import { log } from './lib/logger'
+
+export interface MainContext {
+  settings: SettingsStore
+  notes: NoteRepository
+  jobs: JobRunner
+  sessions: RecordingSessionManager
+  whisper: WhisperManager
+  llm: LlmClient
+  drive: DriveManager
+  broadcast: (event: AppEvent) => void
+  setRecordingState: (state: RecordingStateUpdate) => void
+  afterSettingsUpdate: (previous: AppSettings, next: AppSettings) => void
+  afterRecordingStopped: () => void
+  getWindow: () => BrowserWindow | null
+  chooseNotesDir: () => Promise<string | null>
+}
+
+export function registerIpc(context: MainContext): void {
+  const toast = (level: 'info' | 'success' | 'error', message: string): void => {
+    context.broadcast({ type: 'toast', level, message })
+  }
+
+  ipcMain.handle(IPC.settingsGet, (): AppSettings => context.settings.get())
+  ipcMain.handle(
+    IPC.settingsUpdate,
+    (_event, patch: Partial<AppSettings>): AppSettings => {
+      const previous = context.settings.get()
+      const next = context.settings.update(patch ?? {})
+      context.afterSettingsUpdate(previous, next)
+      return next
+    }
+  )
+  ipcMain.handle(IPC.settingsChooseDir, (): Promise<string | null> => context.chooseNotesDir())
+
+  ipcMain.handle(IPC.envStatus, (): EnvStatus => {
+    const env = getEnv()
+    const settings = context.settings.get()
+    return {
+      envPath: env.envPath,
+      llm: {
+        configured: Boolean(env.opencodeApiKey),
+        baseUrl: env.llmBaseUrl,
+        model: settings.llmModel.trim() || env.llmModel,
+        source: settings.llmModel.trim() ? 'default' : 'env'
+      },
+      google: {
+        clientConfigured: Boolean(env.googleClientId && env.googleClientSecret),
+        tokenConfigured: context.drive.auth.tokenSource() !== 'none',
+        folderName: settings.driveFolderName
+      },
+      notesDirFromEnv: Boolean(env.meetingNotesDir)
+    }
+  })
+
+  ipcMain.handle(IPC.appInfo, (): AppInfo => {
+    const env = getEnv()
+    return {
+      version: app.getVersion(),
+      platform: process.platform,
+      userData: app.getPath('userData'),
+      appPath: app.getAppPath(),
+      envPath: env.envPath,
+      notesDir: context.settings.get().notesDir
+    }
+  })
+  ipcMain.handle(IPC.appOpenPath, async (_event, path: string): Promise<void> => {
+    const rawTarget = resolve(String(path))
+    const target = rawTarget.toLowerCase()
+    const notesDir = resolve(context.settings.get().notesDir).toLowerCase()
+    const userData = resolve(app.getPath('userData')).toLowerCase()
+    const envPath = resolve(getEnv().envPath).toLowerCase()
+    const allowed =
+      target === envPath ||
+      target === notesDir ||
+      target.startsWith(`${notesDir}\\`) ||
+      target.startsWith(`${notesDir}/`) ||
+      target === userData ||
+      target.startsWith(`${userData}\\`) ||
+      target.startsWith(`${userData}/`)
+    if (!allowed) throw new Error('Ruta no permitida')
+    const error = await shell.openPath(rawTarget)
+    if (error) throw new Error(error)
+  })
+  ipcMain.handle(IPC.appRevealPath, async (_event, path: string): Promise<void> => {
+    if (typeof path !== 'string' || !isAbsolute(path)) throw new Error('Ruta inválida')
+    shell.showItemInFolder(path)
+  })
+  ipcMain.handle(IPC.appOpenExternal, async (_event, url: string): Promise<void> => {
+    const parsed = new URL(String(url))
+    const allowedProtocols = ['https:', 'http:', 'ms-settings:']
+    if (!allowedProtocols.includes(parsed.protocol)) throw new Error('URL no permitida')
+    await shell.openExternal(parsed.toString())
+  })
+
+  ipcMain.handle(
+    IPC.recordingStart,
+    async (_event, input: RecordingStartInput): Promise<RecordingStartResult> => {
+      if (!input || typeof input.startedAt !== 'string') throw new Error('Datos de grabación inválidos')
+      const result = await context.sessions.start({
+        hasMic: Boolean(input.hasMic),
+        hasSystem: Boolean(input.hasSystem),
+        startedAt: input.startedAt,
+        language: String(input.language || 'es')
+      })
+      context.setRecordingState({
+        phase: 'recording',
+        recordingId: result.id,
+        elapsedSeconds: 0
+      })
+      return result
+    }
+  )
+  ipcMain.on(IPC.recordingWebmChunk, (_event, id: string, chunk: ArrayBuffer | Uint8Array) => {
+    if (typeof id !== 'string') return
+    context.sessions.sendWebmChunk(id, normalizeChunk(chunk))
+  })
+  ipcMain.on(
+    IPC.recordingPcmChunk,
+    (_event, id: string, track: 'mic' | 'system', chunk: ArrayBuffer | Uint8Array) => {
+      if (typeof id !== 'string' || (track !== 'mic' && track !== 'system')) return
+      context.sessions.sendPcmChunk(id, track, normalizeChunk(chunk))
+    }
+  )
+  ipcMain.handle(
+    IPC.recordingStop,
+    async (_event, input: RecordingStopInput) => {
+      if (!input || typeof input.id !== 'string') throw new Error('Datos de cierre inválidos')
+      context.setRecordingState({ phase: 'stopping', recordingId: input.id, elapsedSeconds: 0 })
+      const job = await context.sessions.stop({
+        id: input.id,
+        durationSeconds: Number(input.durationSeconds) || 0,
+        micPeak: Number(input.micPeak) || 0,
+        systemPeak: Number(input.systemPeak) || 0
+      })
+      context.setRecordingState({ phase: 'idle', recordingId: null, elapsedSeconds: 0 })
+      context.afterRecordingStopped()
+      context.broadcast({ type: 'notes-changed' })
+      return job
+    }
+  )
+  ipcMain.handle(IPC.recordingCancel, async (_event, id: string): Promise<void> => {
+    await context.sessions.cancel(String(id))
+    context.setRecordingState({ phase: 'idle', recordingId: null, elapsedSeconds: 0 })
+  })
+  ipcMain.on(IPC.recordingState, (_event, state: RecordingStateUpdate) => {
+    if (!state || typeof state.phase !== 'string') return
+    context.setRecordingState(state)
+  })
+
+  ipcMain.handle(IPC.jobsList, () => context.jobs.list())
+  ipcMain.handle(IPC.jobsRetry, (_event, id: string) => context.jobs.retry(String(id)))
+  ipcMain.handle(IPC.jobsCancel, (_event, id: string) => context.jobs.cancel(String(id)))
+
+  ipcMain.handle(IPC.notesList, (): Promise<NoteMeta[]> => context.notes.list())
+  ipcMain.handle(IPC.notesGet, (_event, path: string): Promise<NoteDetail | null> =>
+    context.notes.get(String(path))
+  )
+  ipcMain.handle(
+    IPC.notesUpdate,
+    async (_event, input: NoteUpdateInput): Promise<NoteDetail> => {
+      if (!input || typeof input.path !== 'string') throw new Error('Nota inválida')
+      const result = await context.notes.update(input)
+      context.broadcast({ type: 'notes-changed' })
+      return result
+    }
+  )
+  ipcMain.handle(
+    IPC.notesMove,
+    async (_event, path: string, folder: string | null): Promise<NoteDetail> => {
+      const result = await context.notes.move(String(path), folder)
+      context.broadcast({ type: 'notes-changed' })
+      return result
+    }
+  )
+  ipcMain.handle(IPC.notesDelete, async (_event, path: string): Promise<void> => {
+    await context.notes.remove(String(path))
+    context.broadcast({ type: 'notes-changed' })
+  })
+  ipcMain.handle(IPC.notesFolders, (): Promise<string[]> => context.notes.folders())
+  ipcMain.handle(IPC.notesSearch, (_event, query: string): Promise<NoteMeta[]> =>
+    context.notes.search(String(query ?? ''))
+  )
+  ipcMain.handle(IPC.notesReveal, (_event, path: string): Promise<void> =>
+    context.notes.reveal(String(path))
+  )
+  ipcMain.handle(IPC.notesResummarize, async (_event, path: string): Promise<void> => {
+    const note = await context.notes.get(String(path))
+    if (!note) throw new Error('La nota no existe')
+    const transcript = await context.notes.readTranscriptMarkdown(note.path)
+    if (!transcript) throw new Error('La nota todavía no tiene transcripción')
+    context.jobs.enqueue({
+      id: randomUUID(),
+      baseName: note.baseName,
+      notePath: note.path,
+      audioPath: note.path,
+      micWavPath: null,
+      systemWavPath: null,
+      durationSeconds: note.durationSeconds,
+      language: note.language,
+      hasMic: false,
+      hasSystem: false,
+      meetingDate: note.date || new Date().toISOString()
+    })
+    toast('info', 'Regenerando el resumen…')
+  })
+
+  ipcMain.handle(IPC.whisperStatus, (): Promise<WhisperStatus> => context.whisper.status())
+  ipcMain.handle(IPC.whisperDownloadModel, async (): Promise<WhisperStatus> => {
+    const status = await context.whisper.downloadModel()
+    toast('success', 'Modelo de transcripción descargado')
+    return status
+  })
+  ipcMain.handle(IPC.whisperDownloadCuda, async (): Promise<WhisperStatus> => {
+    const status = await context.whisper.downloadCuda()
+    toast('success', 'Paquete CUDA instalado')
+    return status
+  })
+  ipcMain.handle(IPC.whisperCancelDownload, (): void => context.whisper.cancelDownload())
+
+  ipcMain.handle(IPC.llmTest, (): Promise<LlmTestResult> => context.llm.test())
+
+  ipcMain.handle(IPC.driveStatus, (): DriveStatus => context.drive.status())
+  ipcMain.handle(IPC.driveConnect, async (): Promise<DriveStatus> => {
+    const status = await context.drive.connect()
+    toast('success', 'Google Drive conectado')
+    return status
+  })
+  ipcMain.handle(IPC.driveDisconnect, (): DriveStatus => {
+    const status = context.drive.disconnect()
+    toast('info', 'Google Drive desconectado')
+    return status
+  })
+  ipcMain.handle(IPC.driveBackupAll, (): Promise<DriveBackupSummary> => context.drive.backupAll())
+  ipcMain.handle(IPC.driveBackupNote, async (_event, path: string): Promise<void> => {
+    await context.drive.backupNote(String(path))
+    toast('success', 'Nota respaldada en Google Drive')
+  })
+
+  log.info('IPC registrado')
+}
+
+function normalizeChunk(chunk: ArrayBuffer | Uint8Array): ArrayBuffer {
+  if (chunk instanceof Uint8Array) {
+    return chunk.buffer.slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength) as ArrayBuffer
+  }
+  return chunk
+}

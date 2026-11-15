@@ -1,0 +1,30 @@
+appId: com.carlos.chismosito
+productName: Chismosito
+copyright: Copyright © 2026 Carlos
+directories:
+  buildResources: build
+  output: dist
+files:
+  - out/**
+  - package.json
+extraResources:
+  - from: resources/whisper
+    to: whisper
+  - from: resources/tray
+    to: tray
+  - from: resources/icon.png
+    to: icon.png
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: ${productName}-${version}-setup.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+asarUnpack:
+  - resources/**

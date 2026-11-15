@@ -1,0 +1,949 @@
+import { useEffect, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
+import {
+  AlertTriangle,
+  Check,
+  Cloud,
+  CloudOff,
+  Cpu,
+  Download,
+  ExternalLink,
+  FolderOpen,
+  Gauge,
+  HardDrive,
+  KeyRound,
+  Loader2,
+  Mic,
+  RefreshCw,
+  Save,
+  Shield,
+  Sparkles,
+  Volume2
+} from 'lucide-react'
+import type { AppSettings, DownloadProgress, LlmTestResult } from '@shared/types'
+import { useAppStore } from '../store'
+import { ProgressBar } from '../components/ProgressBar'
+import { ConfirmDialog } from '../components/ConfirmDialog'
+import { errorMessage } from '../lib/errors'
+import { formatBytes, timeAgo } from '../lib/format'
+import { cn } from '../lib/cn'
+
+export function SettingsPage(): React.JSX.Element {
+  const settings = useAppStore((state) => state.settings)
+  const env = useAppStore((state) => state.env)
+  const appInfo = useAppStore((state) => state.appInfo)
+  const whisper = useAppStore((state) => state.whisper)
+  const drive = useAppStore((state) => state.drive)
+  const download = useAppStore((state) => state.download)
+  const driveProgress = useAppStore((state) => state.driveProgress)
+  const recordingPhase = useAppStore((state) => state.recording.phase)
+  const setSettings = useAppStore((state) => state.setSettings)
+  const setDrive = useAppStore((state) => state.setDrive)
+  const setWhisper = useAppStore((state) => state.setWhisper)
+  const pushToast = useAppStore((state) => state.pushToast)
+  const refreshNotes = useAppStore((state) => state.refreshNotes)
+  const refreshWhisper = useAppStore((state) => state.refreshWhisper)
+  const refreshDrive = useAppStore((state) => state.refreshDrive)
+  const [searchParams] = useSearchParams()
+
+  const [saving, setSaving] = useState(false)
+  const [userName, setUserName] = useState(settings?.userName ?? '')
+  const [llmModel, setLlmModel] = useState(settings?.llmModel ?? '')
+  const [driveFolder, setDriveFolder] = useState(settings?.driveFolderName ?? 'Chismosito')
+  const [hotkey, setHotkey] = useState(settings?.hotkey ?? '')
+  const [threads, setThreads] = useState(String(settings?.whisperThreads ?? 8))
+  const [devices, setDevices] = useState<Array<{ deviceId: string; label: string }>>([])
+  const [micPermissionError, setMicPermissionError] = useState<string | null>(null)
+  const [testingLlm, setTestingLlm] = useState(false)
+  const [llmTest, setLlmTest] = useState<LlmTestResult | null>(null)
+  const [connecting, setConnecting] = useState(false)
+  const [backingUp, setBackingUp] = useState(false)
+  const [confirmCuda, setConfirmCuda] = useState(false)
+  const [confirmDisconnect, setConfirmDisconnect] = useState(false)
+  const [modelsDir, setModelsDir] = useState('')
+  const sectionScrolled = useRef(false)
+
+  useEffect(() => {
+    if (!settings) return
+    setUserName(settings.userName)
+    setLlmModel(settings.llmModel)
+    setDriveFolder(settings.driveFolderName)
+    setHotkey(settings.hotkey)
+    setThreads(String(settings.whisperThreads))
+  }, [settings])
+
+  useEffect(() => {
+    if (sectionScrolled.current) return
+    const section = searchParams.get('section')
+    if (!section) return
+    const timer = window.setTimeout(() => {
+      document.getElementById(section)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      sectionScrolled.current = true
+    }, 250)
+    return () => window.clearTimeout(timer)
+  }, [searchParams])
+
+  useEffect(() => {
+    void refreshDevices()
+    const handler = (): void => void refreshDevices()
+    navigator.mediaDevices?.addEventListener('devicechange', handler)
+    return () => navigator.mediaDevices?.removeEventListener('devicechange', handler)
+  }, [])
+
+  useEffect(() => {
+    if (!appInfo) return
+    setModelsDir(`${appInfo.userData}\\models`)
+  }, [appInfo])
+
+  if (!settings) {
+    return (
+      <div className="mx-auto max-w-4xl px-8 py-10">
+        <div className="shimmer h-8 w-40 rounded-xl" />
+        <div className="shimmer mt-8 h-64 rounded-3xl" />
+      </div>
+    )
+  }
+
+  const update = async (patch: Partial<AppSettings>): Promise<void> => {
+    setSaving(true)
+    try {
+      const next = await window.chismosito.settings.update(patch)
+      setSettings(next)
+      if (patch.notesDir) {
+        await refreshNotes()
+      }
+    } catch (error) {
+      pushToast('error', errorMessage(error))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const refreshDevices = async (): Promise<void> => {
+    try {
+      const list = await navigator.mediaDevices.enumerateDevices()
+      setDevices(
+        list
+          .filter((device) => device.kind === 'audioinput')
+          .map((device, index) => ({
+            deviceId: device.deviceId,
+            label: device.label || `Micrófono ${index + 1}`
+          }))
+      )
+    } catch {
+      setDevices([])
+    }
+  }
+
+  const askMicPermission = async (): Promise<void> => {
+    setMicPermissionError(null)
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      stream.getTracks().forEach((track) => track.stop())
+      await refreshDevices()
+    } catch (error) {
+      setMicPermissionError(errorMessage(error))
+    }
+  }
+
+  const chooseNotesDir = async (): Promise<void> => {
+    const path = await window.chismosito.settings.chooseNotesDir()
+    if (!path) return
+    await update({ notesDir: path })
+  }
+
+  const downloadModel = async (): Promise<void> => {
+    try {
+      const status = await window.chismosito.whisper.downloadModel()
+      setWhisper(status)
+      await refreshWhisper()
+    } catch (error) {
+      pushToast('error', errorMessage(error))
+    }
+  }
+
+  const downloadCuda = async (): Promise<void> => {
+    try {
+      const status = await window.chismosito.whisper.downloadCuda()
+      setWhisper(status)
+    } catch (error) {
+      pushToast('error', errorMessage(error))
+    }
+  }
+
+  const cancelDownload = async (): Promise<void> => {
+    await window.chismosito.whisper.cancelDownload()
+  }
+
+  const testLlm = async (): Promise<void> => {
+    setTestingLlm(true)
+    setLlmTest(null)
+    try {
+      setLlmTest(await window.chismosito.llm.test())
+    } catch (error) {
+      setLlmTest({ ok: false, model: '', latencyMs: 0, error: errorMessage(error) })
+    } finally {
+      setTestingLlm(false)
+    }
+  }
+
+  const connectDrive = async (): Promise<void> => {
+    setConnecting(true)
+    try {
+      const status = await window.chismosito.drive.connect()
+      setDrive(status)
+      await refreshDrive()
+    } catch (error) {
+      pushToast('error', errorMessage(error))
+    } finally {
+      setConnecting(false)
+    }
+  }
+
+  const disconnectDrive = async (): Promise<void> => {
+    try {
+      const status = await window.chismosito.drive.disconnect()
+      setDrive(status)
+      pushToast('info', 'Google Drive desconectado')
+    } catch (error) {
+      pushToast('error', errorMessage(error))
+    }
+  }
+
+  const backupAll = async (): Promise<void> => {
+    setBackingUp(true)
+    try {
+      await window.chismosito.drive.backupAll()
+      await refreshDrive()
+    } catch (error) {
+      pushToast('error', errorMessage(error))
+    } finally {
+      setBackingUp(false)
+    }
+  }
+
+  const modelDownloading =
+    download?.kind === 'model' && ['downloading', 'extracting'].includes(download.status)
+  const cudaDownloading =
+    download?.kind === 'cuda' && ['downloading', 'extracting'].includes(download.status)
+  const recordingBusy = recordingPhase !== 'idle'
+
+  return (
+    <div className="mx-auto w-full max-w-4xl px-7 py-8 lg:px-10 lg:py-10">
+      <header className="mb-7 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-muted">
+            Chismosito
+          </p>
+          <h1 className="font-serif text-4xl leading-tight">Ajustes</h1>
+          <p className="mt-1 text-sm text-muted">
+            Todo se guarda automáticamente en este equipo.
+          </p>
+        </div>
+        <span className="chip">
+          {saving ? (
+            <>
+              <Loader2 className="size-3 animate-spin" /> Guardando
+            </>
+          ) : (
+            <>
+              <Save className="size-3" /> Guardado
+            </>
+          )}
+        </span>
+      </header>
+
+      <div className="space-y-5">
+        <Section
+          id="general"
+          title="General"
+          description="Tu identidad, idioma de transcripción y apariencia."
+        >
+          <Row label="Tu nombre" hint="Se usa para asignarte acciones en el resumen.">
+            <input
+              className="field max-w-xs"
+              value={userName}
+              onChange={(event) => setUserName(event.target.value)}
+              onBlur={() => userName !== settings.userName && void update({ userName: userName.trim() })}
+              placeholder="Carlos"
+            />
+          </Row>
+          <Row label="Idioma de la reunión" hint="Whisper usa este idioma para transcribir.">
+            <select
+              className="field max-w-xs"
+              value={settings.language}
+              onChange={(event) => void update({ language: event.target.value })}
+            >
+              <option value="es">Español</option>
+              <option value="auto">Detectar automáticamente</option>
+              <option value="en">Inglés</option>
+              <option value="pt">Portugués</option>
+              <option value="fr">Francés</option>
+              <option value="de">Alemán</option>
+              <option value="it">Italiano</option>
+              <option value="ja">Japonés</option>
+              <option value="zh">Chino</option>
+            </select>
+          </Row>
+          <Row label="Tema" hint="Claro, oscuro o el que use Windows.">
+            <select
+              className="field max-w-xs"
+              value={settings.theme}
+              onChange={(event) =>
+                void update({ theme: event.target.value as AppSettings['theme'] })
+              }
+            >
+              <option value="system">Sistema</option>
+              <option value="light">Claro</option>
+              <option value="dark">Oscuro</option>
+            </select>
+          </Row>
+          <Row
+            label="Carpeta de notas"
+            hint="Ahí viven los .md y sus archivos de audio. Puedes abrirla en Explorer."
+          >
+            <div className="flex max-w-xl flex-wrap items-center gap-2">
+              <code className="min-w-0 flex-1 truncate rounded-lg bg-surface2 px-2.5 py-2 text-[11px] text-muted">
+                {settings.notesDir}
+              </code>
+              <button className="btn-secondary h-8 text-xs" onClick={() => void chooseNotesDir()} disabled={recordingBusy} title={recordingBusy ? 'Detén la grabación para cambiar la carpeta' : undefined}>
+                <FolderOpen className="size-3.5" /> Cambiar
+              </button>
+              <button
+                className="btn-ghost h-8 px-2 text-xs"
+                onClick={() => void window.chismosito.app.openPath(settings.notesDir)}
+                title="Abrir carpeta"
+              >
+                <ExternalLink className="size-3.5" />
+              </button>
+            </div>
+          </Row>
+        </Section>
+
+        <Section
+          id="audio"
+          title="Audio"
+          description="De dónde tomamos el audio y cómo se mezcla."
+        >
+          <Row label="Micrófono" hint="Captura tu voz como hablante «Yo».">
+            <Toggle
+              checked={settings.recordMic}
+              onChange={(value) => void update({ recordMic: value })}
+              disabled={recordingBusy}
+            />
+          </Row>
+          <Row label="Audio del sistema" hint="Captura llamadas, videos y lo que suena en tu PC como «Otros».">
+            <Toggle
+              checked={settings.recordSystem}
+              onChange={(value) => void update({ recordSystem: value })}
+              disabled={recordingBusy}
+            />
+          </Row>
+          <Row label="Dispositivo de entrada" hint="Si no ves nombres, autoriza el micrófono primero.">
+            <div className="flex max-w-xl flex-wrap items-center gap-2">
+              <select
+                className="field min-w-[220px] flex-1"
+                value={settings.micDeviceId ?? ''}
+                onChange={(event) =>
+                  void update({ micDeviceId: event.target.value || null })
+                }
+                disabled={recordingBusy}
+              >
+                <option value="">Micrófono predeterminado</option>
+                {devices.map((device) => (
+                  <option key={device.deviceId} value={device.deviceId}>
+                    {device.label}
+                  </option>
+                ))}
+              </select>
+              <button className="btn-secondary h-9 text-xs" onClick={() => void askMicPermission()}>
+                <Mic className="size-3.5" /> Autorizar
+              </button>
+            </div>
+            {micPermissionError ? (
+              <p className="mt-2 text-[11px] text-red-600 dark:text-red-300">{micPermissionError}</p>
+            ) : (
+              <p className="mt-2 flex items-center gap-1.5 text-[11px] text-muted">
+                <Volume2 className="size-3" />
+                Usa audífonos para que el audio del sistema no se cuele por el micrófono.
+              </p>
+            )}
+          </Row>
+        </Section>
+
+        <Section
+          id="transcription"
+          title="Transcripción"
+          description="whisper.cpp corre en tu equipo. Nada de audio se sube a la nube."
+        >
+          <div className="rounded-2xl border border-line bg-surface2/50 p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  {whisper?.model.present ? (
+                    <Check className="size-4 text-olive" />
+                  ) : (
+                    <AlertTriangle className="size-4 text-gold" />
+                  )}
+                  <p className="text-sm font-medium">
+                    Modelo medium {whisper?.model.present ? 'instalado' : 'pendiente'}
+                  </p>
+                </div>
+                <p className="mt-1 break-all text-[11px] leading-relaxed text-muted">
+                  {whisper?.model.path}
+                  {whisper?.model.sizeBytes ? ` · ${formatBytes(whisper.model.sizeBytes)}` : ''}
+                </p>
+              </div>
+              {!whisper?.model.present ? (
+                <button
+                  className="btn-primary h-9 text-xs"
+                  onClick={() => void downloadModel()}
+                  disabled={modelDownloading}
+                >
+                  {modelDownloading ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    <Download className="size-3.5" />
+                  )}
+                  Descargar 539 MB
+                </button>
+              ) : null}
+            </div>
+            {modelDownloading && download ? (
+              <div className="mt-3">
+                <ProgressBar value={download.percent} className="h-1.5" />
+                <div className="mt-1.5 flex items-center justify-between text-[10px] text-muted">
+                  <span>
+                    {formatBytes(download.receivedBytes)} de {formatBytes(download.totalBytes)} ·{' '}
+                    {download.percent}%
+                  </span>
+                  <button className="underline hover:no-underline" onClick={() => void cancelDownload()}>
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            ) : null}
+            {download?.kind === 'model' && download.status === 'error' ? (
+              <p className="mt-2 text-[11px] text-red-600 dark:text-red-300">{download.message}</p>
+            ) : null}
+          </div>
+
+          <Row label="Procesador" hint="auto usa CUDA si el pack está instalado; si falla, cae a CPU.">
+            <select
+              className="field max-w-xs"
+              value={settings.whisperDevice}
+              onChange={(event) =>
+                void update({ whisperDevice: event.target.value as AppSettings['whisperDevice'] })
+              }
+            >
+              <option value="auto">Automático</option>
+              <option value="cpu">CPU</option>
+              <option value="cuda">GPU NVIDIA (CUDA)</option>
+            </select>
+          </Row>
+
+          <div className="rounded-2xl border border-line bg-surface2/50 p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  {whisper?.cudaBinary ? (
+                    <Check className="size-4 text-olive" />
+                  ) : (
+                    <Cpu className="size-4 text-muted" />
+                  )}
+                  <p className="text-sm font-medium">
+                    Aceleración CUDA {whisper?.cudaBinary ? 'instalada' : 'opcional'}
+                  </p>
+                </div>
+                <p className="mt-1 text-[11px] leading-relaxed text-muted">
+                  {whisper?.cudaBinary
+                    ? `Activo: ${whisper.activeDevice === 'cuda' ? 'GPU' : 'CPU (según tu selección)'}.`
+                    : 'Pack para NVIDIA (~650 MB). Transcribe varias veces más rápido en reuniones largas.'}
+                </p>
+              </div>
+              {!whisper?.cudaBinary ? (
+                <button
+                  className="btn-secondary h-9 text-xs"
+                  onClick={() => setConfirmCuda(true)}
+                  disabled={cudaDownloading}
+                >
+                  {cudaDownloading ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    <Download className="size-3.5" />
+                  )}
+                  Descargar pack
+                </button>
+              ) : null}
+            </div>
+            {cudaDownloading && download ? (
+              <div className="mt-3">
+                <ProgressBar
+                  value={download.percent}
+                  className="h-1.5"
+                  indeterminate={download.status === 'extracting'}
+                />
+                <p className="mt-1.5 text-[10px] text-muted">
+                  {download.status === 'extracting'
+                    ? 'Extrayendo el paquete…'
+                    : `${formatBytes(download.receivedBytes)} de ${formatBytes(download.totalBytes)} · ${download.percent}%`}
+                </p>
+              </div>
+            ) : null}
+          </div>
+
+          <Row label="Hilos de CPU" hint="Más hilos no siempre es más rápido. Prueba 6–8.">
+            <input
+              type="number"
+              min={1}
+              max={32}
+              className="field max-w-[110px]"
+              value={threads}
+              onChange={(event) => setThreads(event.target.value)}
+              onBlur={() => {
+                const value = Math.max(1, Math.min(32, Number(threads) || 8))
+                setThreads(String(value))
+                if (value !== settings.whisperThreads) void update({ whisperThreads: value })
+              }}
+            />
+          </Row>
+          <Row
+            label="Conservar WAV temporales"
+            hint="Solo para depurar. Ocupa ~115 MB por hora y se borra al terminar."
+          >
+            <Toggle
+              checked={settings.keepTempWav}
+              onChange={(value) => void update({ keepTempWav: value })}
+            />
+          </Row>
+          <Row label="Binario de whisper" hint="Se incluye con la aplicación; el pack CUDA es aparte.">
+            <span className="text-xs text-muted">
+              {whisper?.cpuBinary ? 'whisper-cli.exe presente' : 'Falta whisper-cli.exe'}
+            </span>
+          </Row>
+        </Section>
+
+        <Section
+          id="llm"
+          title="Resumen con LLM"
+          description="La transcripción se envía al proveedor configurado para generar la nota."
+        >
+          <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-line bg-surface2/50 px-4 py-3 text-xs">
+            {env?.llm.configured ? (
+              <Check className="size-4 text-olive" />
+            ) : (
+              <AlertTriangle className="size-4 text-gold" />
+            )}
+            <span className="font-medium">{env?.llm.configured ? 'API key configurada' : 'Falta la API key'}</span>
+            <span className="text-muted">·</span>
+            <span className="break-all text-muted">{env?.llm.baseUrl}</span>
+          </div>
+
+          <Row label="Modelo" hint="Vacío usa el valor de LLM_MODEL del .env.">
+            <div className="max-w-xl space-y-2">
+              <input
+                className="field"
+                value={llmModel}
+                onChange={(event) => setLlmModel(event.target.value)}
+                onBlur={() =>
+                  llmModel !== settings.llmModel && void update({ llmModel: llmModel.trim() })
+                }
+                placeholder={env?.llm.model}
+              />
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  ['deepseek-v4.1-flash', 'Económico'],
+                  ['claude-haiku-5.5', 'Rápido'],
+                  ['claude-sonnet-5', 'Mejor calidad']
+                ].map(([model, label]) => (
+                  <button
+                    key={model}
+                    onClick={() => {
+                      setLlmModel(model)
+                      void update({ llmModel: model })
+                    }}
+                    className="chip hover:border-accent/40 hover:text-accent"
+                  >
+                    {label}: {model}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[10px] leading-relaxed text-muted">
+                Si el modelo no está disponible, actívalo en{' '}
+                <button
+                  className="underline underline-offset-2 hover:no-underline"
+                  onClick={() =>
+                    void window.chismosito.app.openExternal('https://opencode.ai/console')
+                  }
+                >
+                  OpenCode Console → Models
+                </button>{' '}
+                y verifica que tu workspace tenga créditos.
+              </p>
+            </div>
+          </Row>
+
+          <Row label="API key y endpoint" hint="Se leen del archivo .env; reinicia la app después de editarlo.">
+            <div className="max-w-xl space-y-2">
+              <code className="block break-all rounded-lg bg-surface2 px-2.5 py-2 text-[11px] text-muted">
+                {env?.envPath}
+              </code>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  className="btn-secondary h-8 text-xs"
+                  onClick={() =>
+                    env?.envPath &&
+                    void window.chismosito.app.openPath(env.envPath).catch((error) =>
+                      pushToast('error', errorMessage(error))
+                    )
+                  }
+                >
+                  <KeyRound className="size-3.5" /> Abrir .env
+                </button>
+                <button
+                  className="btn-ghost h-8 text-xs"
+                  onClick={() => {
+                    if (!env?.envPath) return
+                    void navigator.clipboard.writeText(env.envPath)
+                    pushToast('success', 'Ruta copiada')
+                  }}
+                >
+                  Copiar ruta
+                </button>
+              </div>
+            </div>
+          </Row>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              className="btn-secondary h-9 text-xs"
+              onClick={() => void testLlm()}
+              disabled={testingLlm || !env?.llm.configured}
+            >
+              {testingLlm ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="size-3.5" />
+              )}
+              Probar conexión
+            </button>
+            {llmTest ? (
+              <span
+                className={cn(
+                  'text-[11px]',
+                  llmTest.ok ? 'text-olive' : 'text-red-600 dark:text-red-300'
+                )}
+              >
+                {llmTest.ok
+                  ? `OK · ${llmTest.model} · ${llmTest.latencyMs} ms`
+                  : llmTest.error || 'Falló la conexión'}
+              </span>
+            ) : null}
+          </div>
+        </Section>
+
+        <Section
+          id="drive"
+          title="Google Drive"
+          description="Respaldo unidireccional de las notas y su audio a una carpeta administrada por la app."
+        >
+          <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-line bg-surface2/50 px-4 py-3 text-xs">
+            {drive?.connected ? (
+              <Cloud className="size-4 text-olive" />
+            ) : (
+              <CloudOff className="size-4 text-muted" />
+            )}
+            <span className="font-medium">
+              {drive?.connected ? 'Conectado' : 'Sin conectar'}
+            </span>
+            {drive?.connected ? (
+              <>
+                <span className="text-muted">·</span>
+                <span className="text-muted">token: {drive.tokenSource}</span>
+                <span className="text-muted">·</span>
+                <span className="text-muted">último respaldo: {timeAgo(drive.lastBackupAt)}</span>
+              </>
+            ) : null}
+          </div>
+
+          {!env?.google.clientConfigured ? (
+            <div className="rounded-2xl border border-line bg-surface2/40 p-4 text-xs leading-relaxed text-muted">
+              <p className="font-medium text-ink">Faltan las credenciales de Google</p>
+              <ol className="mt-2 list-decimal space-y-1 pl-4">
+                <li>Crea un proyecto en Google Cloud Console y habilita la API de Drive.</li>
+                <li>Configura la pantalla de consentimiento (tipo External).</li>
+                <li>Crea un cliente OAuth de tipo «Desktop app».</li>
+                <li>
+                  Copia <code>GOOGLE_CLIENT_ID</code> y <code>GOOGLE_CLIENT_SECRET</code> al .env.
+                </li>
+              </ol>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  className="btn-secondary h-8 text-xs"
+                  onClick={() =>
+                    void window.chismosito.app.openExternal(
+                      'https://console.cloud.google.com/apis/credentials'
+                    )
+                  }
+                >
+                  <ExternalLink className="size-3.5" /> Abrir Google Cloud
+                </button>
+                <button
+                  className="btn-ghost h-8 text-xs"
+                  onClick={() =>
+                    env?.envPath &&
+                    void window.chismosito.app.openPath(env.envPath).catch((error) =>
+                      pushToast('error', errorMessage(error))
+                    )
+                  }
+                >
+                  Abrir .env
+                </button>
+              </div>
+            </div>
+          ) : drive?.connected ? (
+            <div className="flex flex-wrap gap-2">
+              <button
+                className="btn-secondary h-9 text-xs"
+                onClick={() => setConfirmDisconnect(true)}
+              >
+                <CloudOff className="size-3.5" /> Desconectar
+              </button>
+              <button
+                className="btn-primary h-9 text-xs"
+                onClick={() => void backupAll()}
+                disabled={backingUp}
+              >
+                {backingUp ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <Cloud className="size-3.5" />
+                )}
+                Respaldar todo ahora
+              </button>
+            </div>
+          ) : (
+            <button className="btn-primary h-9 text-xs" onClick={() => void connectDrive()} disabled={connecting}>
+              {connecting ? <Loader2 className="size-3.5 animate-spin" /> : <Cloud className="size-3.5" />}
+              {connecting ? 'Esperando autorización en el navegador…' : 'Conectar Google Drive'}
+            </button>
+          )}
+
+          {driveProgress?.active ? (
+            <div className="rounded-2xl border border-line bg-surface p-3">
+              <div className="mb-2 flex items-center justify-between text-[11px] text-muted">
+                <span className="truncate">{driveProgress.current || 'Preparando respaldo…'}</span>
+                <span>
+                  {driveProgress.completed}/{driveProgress.total}
+                </span>
+              </div>
+              <ProgressBar
+                value={driveProgress.total ? (driveProgress.completed / driveProgress.total) * 100 : 0}
+                className="h-1.5"
+              />
+            </div>
+          ) : null}
+
+          <Row label="Carpeta en Drive" hint="La app la crea y administra; no necesita existir antes.">
+            <input
+              className="field max-w-xs"
+              value={driveFolder}
+              onChange={(event) => setDriveFolder(event.target.value)}
+              onBlur={() =>
+                driveFolder.trim() &&
+                driveFolder !== settings.driveFolderName &&
+                void update({ driveFolderName: driveFolder.trim() })
+              }
+            />
+          </Row>
+          <Row label="Respaldo automático" hint="Se activa al terminar de procesar cada reunión.">
+            <Toggle
+              checked={settings.autoBackup}
+              onChange={(value) => void update({ autoBackup: value })}
+            />
+          </Row>
+          <p className="flex items-start gap-2 rounded-xl border border-line bg-surface2/40 px-3 py-2 text-[11px] leading-relaxed text-muted">
+            <Shield className="mt-0.5 size-3.5 shrink-0" />
+            Se usa el permiso mínimo «drive.file». Si tu cliente OAuth está en modo Testing, el token
+            expira a los 7 días; publica la app en producción (sin verificar) para evitarlo.
+          </p>
+        </Section>
+
+        <Section
+          id="desktop"
+          title="Escritorio"
+          description="Cómo se comporta Chismosito cuando no lo estás mirando."
+        >
+          <Row label="Cerrar a la bandeja" hint="Sigue grabando y procesando en segundo plano.">
+            <Toggle
+              checked={settings.closeToTray}
+              onChange={(value) => void update({ closeToTray: value })}
+            />
+          </Row>
+          <Row label="Iniciar con Windows" hint="Abre Chismosito al iniciar sesión.">
+            <Toggle
+              checked={settings.launchAtLogin}
+              onChange={(value) => void update({ launchAtLogin: value })}
+            />
+          </Row>
+          <Row label="Atajo global" hint="Inicia o detiene la grabación. Ejemplo: CommandOrControl+Shift+R.">
+            <div className="max-w-sm space-y-1">
+              <input
+                className="field"
+                value={hotkey}
+                onChange={(event) => setHotkey(event.target.value)}
+                onBlur={() => {
+                  const value = hotkey.trim()
+                  if (value && value !== settings.hotkey) void update({ hotkey: value })
+                }}
+              />
+              <p className="text-[10px] text-muted">
+                Si Windows ya usa ese atajo, la app te avisará y podrás cambiarlo.
+              </p>
+            </div>
+          </Row>
+        </Section>
+
+        <Section
+          id="advanced"
+          title="Información y avanzado"
+          description="Rutas de datos para depurar o respaldar manualmente."
+        >
+          <Row label="Versión" hint="Chismosito para Windows 11.">
+            <span className="text-xs text-muted">{appInfo?.version}</span>
+          </Row>
+          <Row label="Datos de la aplicación" hint="Ajustes, logs, modelos y estado de trabajos.">
+            <button
+              className="btn-secondary h-8 text-xs"
+              onClick={() => void window.chismosito.app.openPath(appInfo?.userData ?? '')}
+            >
+              <FolderOpen className="size-3.5" /> Abrir carpeta
+            </button>
+          </Row>
+          <Row label="Modelos" hint="Si borras los modelos, se vuelven a descargar desde Ajustes.">
+            <div className="flex items-center gap-2">
+              <code className="max-w-[320px] truncate rounded-lg bg-surface2 px-2 py-1 text-[11px] text-muted">
+                {modelsDir}
+              </code>
+              <button
+                className="btn-ghost h-8 px-2 text-xs"
+                onClick={() => void window.chismosito.app.openPath(modelsDir).catch(() => undefined)}
+              >
+                <FolderOpen className="size-3.5" />
+              </button>
+            </div>
+          </Row>
+          <Row label="Archivo .env" hint="API keys y credenciales. Nunca se muestran en la interfaz.">
+            <div className="flex flex-wrap items-center gap-2">
+              <code className="max-w-[320px] truncate rounded-lg bg-surface2 px-2 py-1 text-[11px] text-muted">
+                {env?.envPath}
+              </code>
+              <button
+                className="btn-ghost h-8 px-2 text-xs"
+                onClick={() => void window.chismosito.app.openPath(env?.envPath ?? '').catch(() => undefined)}
+              >
+                <ExternalLink className="size-3.5" />
+              </button>
+            </div>
+          </Row>
+          <Row label="Diagnóstico" hint="Los logs locales ayudan a encontrar errores.">
+            <span className="inline-flex items-center gap-1.5 text-xs text-muted">
+              <HardDrive className="size-3.5" /> logs/app.log
+            </span>
+          </Row>
+        </Section>
+      </div>
+
+      <ConfirmDialog
+        open={confirmCuda}
+        title="Descargar pack CUDA"
+        description="Son ~650 MB de descarga y ~1.5 GB en disco. Requiere una GPU NVIDIA. Si falla, Chismosito usará CPU automáticamente."
+        confirmLabel="Descargar"
+        onClose={() => setConfirmCuda(false)}
+        onConfirm={() => void downloadCuda()}
+      />
+      <ConfirmDialog
+        open={confirmDisconnect}
+        title="Desconectar Google Drive"
+        description="Se borrará el token local. Los archivos que ya están en Drive no se eliminan."
+        confirmLabel="Desconectar"
+        destructive
+        onClose={() => setConfirmDisconnect(false)}
+        onConfirm={() => void disconnectDrive()}
+      />
+    </div>
+  )
+}
+
+function Section({
+  id,
+  title,
+  description,
+  children
+}: {
+  id: string
+  title: string
+  description: string
+  children: React.ReactNode
+}): React.JSX.Element {
+  return (
+    <section id={id} className="scroll-mt-6 rounded-3xl border border-line bg-surface p-6">
+      <div className="mb-5">
+        <h2 className="font-serif text-2xl leading-tight">{title}</h2>
+        <p className="mt-1 text-xs leading-relaxed text-muted">{description}</p>
+      </div>
+      <div className="space-y-5">{children}</div>
+    </section>
+  )
+}
+
+function Row({
+  label,
+  hint,
+  children
+}: {
+  label: string
+  hint?: string
+  children: React.ReactNode
+}): React.JSX.Element {
+  return (
+    <div className="grid gap-2 sm:grid-cols-[220px_1fr] sm:gap-5">
+      <div>
+        <p className="text-sm font-medium">{label}</p>
+        {hint ? <p className="mt-0.5 text-[11px] leading-relaxed text-muted">{hint}</p> : null}
+      </div>
+      <div className="min-w-0">{children}</div>
+    </div>
+  )
+}
+
+function Toggle({
+  checked,
+  onChange,
+  disabled
+}: {
+  checked: boolean
+  onChange: (value: boolean) => void
+  disabled?: boolean
+}): React.JSX.Element {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+      className={cn(
+        'flex h-6 w-11 items-center rounded-full p-0.5 transition-colors disabled:opacity-50',
+        checked ? 'bg-accent' : 'bg-line'
+      )}
+    >
+      <span
+        className={cn(
+          'size-5 rounded-full bg-white shadow transition-transform',
+          checked && 'translate-x-5'
+        )}
+      />
+    </button>
+  )
+}

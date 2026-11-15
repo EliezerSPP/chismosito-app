@@ -1,0 +1,60 @@
+export const IPC = {
+  settingsGet: 'settings:get',
+  settingsUpdate: 'settings:update',
+  settingsChooseDir: 'settings:choose-dir',
+
+  envStatus: 'env:status',
+
+  appInfo: 'app:info',
+  appOpenPath: 'app:open-path',
+  appRevealPath: 'app:reveal-path',
+  appOpenExternal: 'app:open-external',
+
+  recordingStart: 'recording:start',
+  recordingWebmChunk: 'recording:webm-chunk',
+  recordingPcmChunk: 'recording:pcm-chunk',
+  recordingStop: 'recording:stop',
+  recordingCancel: 'recording:cancel',
+  recordingState: 'recording:state',
+
+  jobsList: 'jobs:list',
+  jobsRetry: 'jobs:retry',
+  jobsCancel: 'jobs:cancel',
+
+  notesList: 'notes:list',
+  notesGet: 'notes:get',
+  notesUpdate: 'notes:update',
+  notesMove: 'notes:move',
+  notesDelete: 'notes:delete',
+  notesFolders: 'notes:folders',
+  notesReveal: 'notes:reveal',
+  notesResummarize: 'notes:resummarize',
+  notesSearch: 'notes:search',
+
+  whisperStatus: 'whisper:status',
+  whisperDownloadModel: 'whisper:download-model',
+  whisperDownloadCuda: 'whisper:download-cuda',
+  whisperCancelDownload: 'whisper:cancel-download',
+
+  llmTest: 'llm:test',
+
+  driveStatus: 'drive:status',
+  driveConnect: 'drive:connect',
+  driveDisconnect: 'drive:disconnect',
+  driveBackupAll: 'drive:backup-all',
+  driveBackupNote: 'drive:backup-note',
+
+  event: 'app:event'
+} as const
+
+export const MODEL_FILE_NAME = 'ggml-medium-q5_0.bin'
+export const MODEL_EXPECTED_BYTES = 539_212_467
+export const MODEL_URL =
+  'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium-q5_0.bin'
+export const CUDA_ZIP_NAME = 'whisper-bin-win-cuda-12.4.0-x64.zip'
+export const CUDA_URL = `https://github.com/ggml-org/whisper.cpp/releases/download/b5454/${CUDA_ZIP_NAME}`
+
+export const DEFAULT_HOTKEY = 'CommandOrControl+Shift+R'
+export const DEFAULT_LLM_BASE_URL = 'https://opencode.ai/inference/openai/v1'
+export const DEFAULT_LLM_MODEL = 'deepseek-v4.1-flash'
+export const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file'
