@@ -133,10 +133,27 @@ WHISPER_MODEL_PATH=      # opcional: ruta a un ggml-medium personalizado
 2. **Micrófono:** autoriza el acceso. Si Windows lo bloquea, abre Configuración › Privacidad y seguridad › Micrófono.
 3. **Audio del sistema:** Windows 11 lo captura mediante loopback de Chromium; no necesitas instalar controladores. En algunas configuraciones Windows muestra un indicador de captura de pantalla.
 4. **GPU opcional:** si tienes NVIDIA, descarga el pack CUDA desde Ajustes (~650 MB; ~1.4 GB en disco). En una RTX 4060, la transcripción es aproximadamente 5 veces más rápida que en CPU. Si el pack falla, la app usa CPU automáticamente.
+5. **Carpetas:** crea al menos una en **Ajustes → Carpetas** si quieres que Jev proponga dónde guardar cada reunión. Sin carpetas existentes no hay sugerencias.
+6. **API key:** configura `OPENCODE_API_KEY` para el resumen, el chat y las sugerencias. Sin clave, la transcripción y el audio siguen funcionando.
 
 ---
 
 ## Uso
+
+### Guía rápida
+
+1. **Prepara la app la primera vez.** Descarga el modelo de transcripción y autoriza el micrófono. Si tienes NVIDIA, puedes instalar el pack CUDA para transcribir más rápido. Configura `OPENCODE_API_KEY` en el `.env` si quieres resumen automático, chat y sugerencias de carpeta.
+2. **Crea tus carpetas.** Entra a **Ajustes → Carpetas** y crea las categorías que uses normalmente (por ejemplo, `Producto`, `Ventas`, `Operaciones`). Puedes crear subcarpetas escribiendo `Producto/Q4`. Jev solo puede sugerir carpetas que ya existan.
+3. **Elige las fuentes de audio.** En la pantalla **Grabar** activa el micrófono y/o el audio del sistema. Usa audífonos para evitar que el micrófono capture el audio de las bocinas.
+4. **Graba la reunión.** Pulsa el botón grande o usa `Ctrl+Shift+R`. Al detener, el audio se guarda y comienza la transcripción en segundo plano. Puedes seguir usando la app o cerrarla a la bandeja.
+5. **Espera el procesamiento.** En **En proceso** verás el avance. Al terminar se crea la nota con resumen, decisiones, acciones y transcripción. Si algo falla, la tarjeta te permite reintentar o abrir la nota.
+6. **Revisa la nota.** Abre la nota desde **Recientes** o **Biblioteca**. Haz clic en cualquier timestamp de la transcripción para escuchar ese momento del audio.
+7. **Acepta la sugerencia de carpeta.** Si Jev encontró una carpeta existente que encaja, verás un banner: **Mover a «Carpeta»**, **Elegir otra** o **Descartar**. El chip `Sugerencia: …` también aparece en Biblioteca/Home. La nota nunca se mueve sola.
+8. **Pregunta sobre una reunión.** Abre la nota y entra a la pestaña **Preguntar**. Sirve para detalles que no están en el resumen: «¿qué se dijo del presupuesto?», «¿quién quedó de revisar esto?». Las respuestas citan momentos concretos y puedes hacer clic en la cita para saltar al audio.
+9. **Pregunta a toda la biblioteca.** Usa **Preguntar** en la barra lateral. Puedes filtrar por fecha (hoy, esta semana, este mes o un rango) y por carpeta. Ejemplo: «¿qué tareas me asignaron esta semana?». Las respuestas muestran las reuniones consultadas.
+10. **Respaldar.** Si conectas Google Drive en Ajustes, puedes respaldar una nota, todas las notas o las conversaciones. El respaldo automático se configura en **Ajustes → Google Drive**.
+
+### Lo que puedes hacer con cada nota
 
 - **Grabar:** elige micrófono y/o audio del sistema y pulsa el botón. También puedes usar el atajo global (`Ctrl+Shift+R` por defecto) o el menú de la bandeja.
 - **Detener:** al detener se guarda el WebM/Opus y comienza el procesamiento en segundo plano. Puedes seguir usando la app o cerrarla a la bandeja.
@@ -153,6 +170,22 @@ WHISPER_MODEL_PATH=      # opcional: ruta a un ggml-medium personalizado
 - **Respaldo:** si Drive está conectado, puedes respaldar una nota desde su vista o todo desde Ajustes. El respaldo automático se activa al terminar el procesamiento. Los chats se respaldan en `Conversaciones/` si activas **Respaldar conversaciones**.
 - **Regenerar resumen:** si el LLM falló, aparece un botón para reintentar sin volver a transcribir.
 - **Bandeja:** cerrar la ventana la oculta; la grabación y el procesamiento continúan. «Salir» desde la bandeja pide confirmación si hay trabajo en curso.
+
+### Ajustes que conviene revisar
+
+- **General:** tu nombre (para asignarte acciones), idioma de transcripción, tema y carpeta de notas.
+- **Carpetas:** crea, renombra o elimina carpetas. Crear carpetas antes de grabar mejora las sugerencias de Jev.
+- **Resumen con LLM:** modelo del resumen, activar/desactivar la sugerencia de carpeta y modelo de Jev.
+- **Google Drive:** conectar la cuenta, respaldo automático de notas y respaldo de conversaciones.
+- **Escritorio:** atajo global, inicio con Windows y comportamiento al cerrar la ventana.
+
+### Preguntas frecuentes
+
+- **¿Jev movió mi nota a una carpeta equivocada?** No la mueve solo. Si aceptaste una sugerencia equivocada, abre la nota y usa **Editar** para moverla a otra carpeta o a **Sin clasificar**.
+- **¿Por qué no aparece una sugerencia de carpeta?** Jev solo propone carpetas existentes. Si no tienes carpetas, o si la nota ya estaba archivada cuando se procesó, no habrá sugerencia. Crea carpetas y usa **Regenerar resumen** para volver a calcularla.
+- **¿Dónde quedaron las notas de una carpeta eliminada?** En **Sin clasificar**. Eliminar una carpeta nunca borra notas; si dentro hay archivos que no son notas ni audios, la app aborta la operación para no borrar nada inesperado.
+- **¿Los chats se respaldan en Drive?** Sí, si activas **Respaldar conversaciones**. Se guardan como JSON en `Chismosito/Conversaciones/`. El respaldo es unidireccional: no se restauran automáticamente.
+- **¿Puedo usar la app sin API key?** Sí. La transcripción y el audio funcionan, pero no habrá resumen, chat ni sugerencias de carpeta.
 
 ### Formato de la nota
 
