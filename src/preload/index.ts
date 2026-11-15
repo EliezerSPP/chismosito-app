@@ -38,9 +38,16 @@ const api: ChismositoApi = {
     move: (path, folder) => ipcRenderer.invoke(IPC.notesMove, path, folder),
     remove: (path) => ipcRenderer.invoke(IPC.notesDelete, path),
     folders: () => ipcRenderer.invoke(IPC.notesFolders),
+    clearFolderSuggestion: (path) =>
+      ipcRenderer.invoke(IPC.notesClearFolderSuggestion, path),
     reveal: (path) => ipcRenderer.invoke(IPC.notesReveal, path),
     resummarize: (path) => ipcRenderer.invoke(IPC.notesResummarize, path),
     search: (query) => ipcRenderer.invoke(IPC.notesSearch, query)
+  },
+  folders: {
+    create: (path) => ipcRenderer.invoke(IPC.foldersCreate, path),
+    rename: (path, newName) => ipcRenderer.invoke(IPC.foldersRename, path, newName),
+    remove: (path) => ipcRenderer.invoke(IPC.foldersRemove, path)
   },
   whisper: {
     status: () => ipcRenderer.invoke(IPC.whisperStatus),
@@ -50,6 +57,23 @@ const api: ChismositoApi = {
   },
   llm: {
     test: () => ipcRenderer.invoke(IPC.llmTest)
+  },
+  jev: {
+    test: () => ipcRenderer.invoke(IPC.jevTest)
+  },
+  chat: {
+    threads: (scope) => ipcRenderer.invoke(IPC.chatThreads, scope),
+    get: (threadId) => ipcRenderer.invoke(IPC.chatGet, threadId),
+    open: (input) => ipcRenderer.invoke(IPC.chatOpen, input),
+    create: () => ipcRenderer.invoke(IPC.chatCreate),
+    send: (input) => ipcRenderer.invoke(IPC.chatSend, input),
+    retry: (threadId) => ipcRenderer.invoke(IPC.chatRetry, threadId),
+    cancel: (requestId) => ipcRenderer.invoke(IPC.chatCancel, requestId),
+    clear: (threadId) => ipcRenderer.invoke(IPC.chatClear, threadId),
+    remove: (threadId) => ipcRenderer.invoke(IPC.chatRemove, threadId),
+    updateFilters: (threadId, filters) =>
+      ipcRenderer.invoke(IPC.chatUpdateFilters, threadId, filters),
+    backup: (threadId) => ipcRenderer.invoke(IPC.chatBackup, threadId)
   },
   drive: {
     status: () => ipcRenderer.invoke(IPC.driveStatus),

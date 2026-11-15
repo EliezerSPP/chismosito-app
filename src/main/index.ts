@@ -25,9 +25,12 @@ import { SettingsStore, settingsFile } from './settings'
 import { NoteRepository } from './notes/repository'
 import { WhisperManager } from './whisper/manager'
 import { LlmClient } from './llm/summarizer'
+import { JevClient } from './llm/jev'
 import { DriveManager } from './drive/manager'
 import { JobRunner } from './jobs/runner'
 import { RecordingSessionManager } from './audio/session'
+import { ChatStore } from './chat/store'
+import { ChatAssistant } from './chat/assistant'
 import { registerIpc, type MainContext } from './ipc'
 import { registerMediaProtocol } from './media'
 import { ensureEnvFile } from './env'
@@ -87,23 +90,47 @@ async function bootstrap(): Promise<void> {
   const notes = new NoteRepository(settings)
   const whisper = new WhisperManager(settings)
   const llm = new LlmClient(settings)
+  const jev = new JevClient(settings)
+  const chats = new ChatStore(join(app.getPath('userData'), 'chats'), () => settings.get().notesDir)
+  await chats.init()
 
   const drive = new DriveManager({
     settings,
     notes,
+    chats,
     emitStatus: (status) => broadcast({ type: 'drive', status }),
     emitProgress: (progress) => broadcast({ type: 'drive-progress', progress }),
     emitToast: (level, message) => toast(level, message)
   })
   notes.setDriveStateProvider((relativePath, mtimeMs) => drive.noteState(relativePath, mtimeMs))
-  notes.onMoved((oldPath, newPath) => drive.handleMove(oldPath, newPath))
-  notes.onDeleted((notePath) => drive.handleDelete(notePath))
+  notes.onMoved((oldPath, newPath) => {
+    chats.remapNote(oldPath, newPath)
+    drive.handleMove(oldPath, newPath)
+    context?.jobs.handleNoteMove(oldPath, newPath)
+  })
+  notes.onDeleted((notePath) => {
+    chats.removeForNote(notePath)
+    drive.handleDelete(notePath)
+    context?.jobs.removeForNote(notePath)
+  })
+
+  const chat = new ChatAssistant({
+    settings,
+    notes,
+    chats,
+    llm,
+    broadcast,
+    backupChat: (threadId) => drive.backupChat(threadId),
+    chatAutoBackupEnabled: () => drive.chatAutoBackupEnabled(),
+    onChatDeleted: (thread) => drive.handleChatDelete(thread)
+  })
 
   const jobs = new JobRunner({
     settings,
     notes,
     whisper,
     llm,
+    jev,
     emitJobs: (entries) => broadcast({ type: 'jobs', jobs: entries }),
     emitToast: (level, message) => toast(level, message),
     onNoteChanged: () => broadcast({ type: 'notes-changed' }),
@@ -121,7 +148,9 @@ async function bootstrap(): Promise<void> {
     sessions,
     whisper,
     llm,
+    jev,
     drive,
+    chat,
     broadcast,
     setRecordingState,
     afterSettingsUpdate,
@@ -542,6 +571,7 @@ function finishQuit(): void {
 app.on('before-quit', () => {
   isQuitting = true
   context?.jobs.abortForQuit()
+  context?.chat.dispose()
   globalShortcut.unregisterAll()
   if (watcher) {
     void watcher.close()

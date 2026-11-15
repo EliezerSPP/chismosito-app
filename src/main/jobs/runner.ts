@@ -1,7 +1,7 @@
 import { app } from 'electron'
 import { existsSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { dirname, join, basename } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { Job, JobStage } from '@shared/types'
 import type { SettingsStore } from '../settings'
@@ -10,6 +10,7 @@ import type { WhisperManager } from '../whisper/manager'
 import { runWhisper, type RawSegment } from '../whisper/runner'
 import { mergeSpeakers, renderTranscript } from '../whisper/merge'
 import type { LlmClient } from '../llm/summarizer'
+import type { JevClient, FolderSuggestion } from '../llm/jev'
 import { ensureDir, writeAtomic } from '../lib/fs'
 import { log } from '../lib/logger'
 
@@ -32,6 +33,7 @@ interface JobRunnerDeps {
   notes: NoteRepository
   whisper: WhisperManager
   llm: LlmClient
+  jev: JevClient
   emitJobs: (jobs: Job[]) => void
   emitToast: (level: 'info' | 'success' | 'error', message: string) => void
   onNoteChanged: () => void
@@ -73,6 +75,17 @@ export class JobRunner {
     } catch {
       this.jobs = []
     }
+
+    const beforeCleanup = this.jobs.length
+    this.jobs = this.jobs.filter((job) => {
+      if (!job.notePath || existsSync(job.notePath)) return true
+      if (!['done', 'failed', 'cancelled'].includes(job.stage)) {
+        log.warn(`Se descarta el trabajo ${job.id}: la nota ya no existe`)
+      }
+      return false
+    })
+    if (this.jobs.length !== beforeCleanup) this.save()
+
     let resumed = false
     for (const job of this.jobs) {
       if (!['done', 'failed', 'cancelled'].includes(job.stage)) {
@@ -85,6 +98,34 @@ export class JobRunner {
     }
     if (resumed) this.save()
     this.kick()
+  }
+
+  removeForNote(notePath: string): void {
+    const target = normalizePath(notePath)
+    const matches = this.jobs.filter((job) => normalizePath(job.notePath) === target)
+    if (matches.length === 0) return
+
+    const includesCurrent = matches.some((job) => job.id === this.currentJobId)
+    this.jobs = this.jobs.filter((job) => normalizePath(job.notePath) !== target)
+    if (includesCurrent) this.currentAbort?.abort()
+    this.saveNow()
+    this.deps.emitJobs(this.list())
+  }
+
+  handleNoteMove(oldPath: string, newPath: string): void {
+    const target = normalizePath(oldPath)
+    let changed = false
+    for (const job of this.jobs) {
+      if (normalizePath(job.notePath) !== target) continue
+      job.notePath = newPath
+      job.baseName = basename(newPath, '.md')
+      job.audioPath = newPath.replace(/\.md$/i, '.webm')
+      job.updatedAt = new Date().toISOString()
+      changed = true
+    }
+    if (!changed) return
+    this.saveNow()
+    this.deps.emitJobs(this.list())
   }
 
   list(): Job[] {
@@ -353,6 +394,30 @@ export class JobRunner {
 
       if (signal?.aborted) throw new Error('Procesamiento cancelado')
 
+      let folderSuggestion: FolderSuggestion | null = null
+      if (summary && !note?.folder && settings.folderSuggestions && this.deps.jev.configured()) {
+        try {
+          const folders = await this.deps.notes.folders()
+          if (folders.length > 0) {
+            this.update(job, {
+              stage: 'summarizing',
+              progress: 90,
+              message: 'Sugiriendo carpeta…'
+            })
+            folderSuggestion = await this.deps.jev.suggestFolder({
+              title: summary.title,
+              summary: summary.summary,
+              topics: summary.topics,
+              folders,
+              index: await this.deps.notes.index()
+            })
+          }
+        } catch (error) {
+          log.warn('No se pudo calcular la sugerencia de carpeta', error)
+        }
+      }
+      if (signal?.aborted) throw new Error('Procesamiento cancelado')
+
       this.update(job, { stage: 'finalizing', progress: 94, message: STAGE_MESSAGES.finalizing })
       await this.deps.notes.writeResult(job.notePath, {
         summary: summary?.summary ?? null,
@@ -360,7 +425,9 @@ export class JobRunner {
         llm: summary?.model ?? null,
         status: summary ? 'complete' : 'summary_failed',
         title: summary?.title,
-        topics: summary?.topics
+        topics: summary?.topics,
+        suggestedFolder: folderSuggestion?.folder ?? null,
+        suggestedFolderConfidence: folderSuggestion?.confidence ?? null
       })
       this.deps.onNoteChanged()
 
@@ -445,4 +512,8 @@ export class JobRunner {
       await rm(dirname(job.systemWavPath), { recursive: true, force: true })
     }
   }
+}
+
+function normalizePath(value: string): string {
+  return value.replace(/\\/g, '/').toLowerCase()
 }

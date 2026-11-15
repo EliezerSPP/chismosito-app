@@ -13,6 +13,8 @@ export interface EnvConfig {
   opencodeApiKey: string
   llmBaseUrl: string
   llmModel: string
+  jevBaseUrl: string
+  jevModel: string
   googleClientId: string
   googleClientSecret: string
   googleRefreshToken: string
@@ -73,6 +75,9 @@ export function loadEnv(): EnvConfig {
     opencodeApiKey: read('OPENCODE_API_KEY'),
     llmBaseUrl: normalizeLlmBaseUrl(read('LLM_BASE_URL') || read('OPENCODE_BASE_URL')),
     llmModel: read('LLM_MODEL') || DEFAULT_LLM_MODEL,
+    jevBaseUrl:
+      read('JEV_BASE_URL') || 'https://opencode.ai/inference/systemone/v1/systemone',
+    jevModel: read('JEV_MODEL') || 'jev-1.13-free',
     googleClientId: read('GOOGLE_CLIENT_ID'),
     googleClientSecret: read('GOOGLE_CLIENT_SECRET'),
     googleRefreshToken: read('GOOGLE_REFRESH_TOKEN'),
@@ -104,6 +109,10 @@ const ENV_TEMPLATE = `# Chismosito — configuración local
 OPENCODE_API_KEY=
 LLM_BASE_URL=https://opencode.ai/inference
 LLM_MODEL=deepseek-v4.1-flash
+
+# Jev (sugerencia de carpeta al terminar)
+JEV_MODEL=jev-1.13-free
+JEV_BASE_URL=https://opencode.ai/inference/systemone/v1/systemone
 
 # Google Drive (cliente OAuth tipo "Desktop app")
 GOOGLE_CLIENT_ID=

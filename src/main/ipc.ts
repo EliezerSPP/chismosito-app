@@ -6,6 +6,13 @@ import type {
   AppEvent,
   AppInfo,
   AppSettings,
+  ChatFilter,
+  ChatOpenInput,
+  ChatScope,
+  ChatSendInput,
+  ChatSendResult,
+  ChatThread,
+  ChatThreadSummary,
   DriveBackupSummary,
   DriveStatus,
   EnvStatus,
@@ -26,7 +33,9 @@ import type { JobRunner } from './jobs/runner'
 import type { RecordingSessionManager } from './audio/session'
 import type { WhisperManager } from './whisper/manager'
 import type { LlmClient } from './llm/summarizer'
+import type { JevClient } from './llm/jev'
 import type { DriveManager } from './drive/manager'
+import type { ChatAssistant } from './chat/assistant'
 import { getEnv } from './env'
 import { log } from './lib/logger'
 
@@ -37,7 +46,9 @@ export interface MainContext {
   sessions: RecordingSessionManager
   whisper: WhisperManager
   llm: LlmClient
+  jev: JevClient
   drive: DriveManager
+  chat: ChatAssistant
   broadcast: (event: AppEvent) => void
   setRecordingState: (state: RecordingStateUpdate) => void
   afterSettingsUpdate: (previous: AppSettings, next: AppSettings) => void
@@ -49,6 +60,17 @@ export interface MainContext {
 export function registerIpc(context: MainContext): void {
   const toast = (level: 'info' | 'success' | 'error', message: string): void => {
     context.broadcast({ type: 'toast', level, message })
+  }
+  const assertFolderChangeAllowed = (): void => {
+    if (context.sessions.isRecording()) {
+      throw new Error('Detén la grabación antes de renombrar o eliminar carpetas')
+    }
+    const active = context.jobs
+      .list()
+      .some((job) => !['done', 'failed', 'cancelled'].includes(job.stage))
+    if (active) {
+      throw new Error('Espera a que terminen los trabajos de procesamiento')
+    }
   }
 
   ipcMain.handle(IPC.settingsGet, (): AppSettings => context.settings.get())
@@ -73,6 +95,11 @@ export function registerIpc(context: MainContext): void {
         baseUrl: env.llmBaseUrl,
         model: settings.llmModel.trim() || env.llmModel,
         source: settings.llmModel.trim() ? 'default' : 'env'
+      },
+      jev: {
+        configured: Boolean(env.opencodeApiKey),
+        baseUrl: env.jevBaseUrl,
+        model: settings.jevModel.trim() || env.jevModel
       },
       google: {
         clientConfigured: Boolean(env.googleClientId && env.googleClientSecret),
@@ -208,6 +235,14 @@ export function registerIpc(context: MainContext): void {
     context.broadcast({ type: 'notes-changed' })
   })
   ipcMain.handle(IPC.notesFolders, (): Promise<string[]> => context.notes.folders())
+  ipcMain.handle(
+    IPC.notesClearFolderSuggestion,
+    async (_event, path: string): Promise<NoteDetail> => {
+      const result = await context.notes.clearFolderSuggestion(String(path))
+      context.broadcast({ type: 'notes-changed' })
+      return result
+    }
+  )
   ipcMain.handle(IPC.notesSearch, (_event, query: string): Promise<NoteMeta[]> =>
     context.notes.search(String(query ?? ''))
   )
@@ -235,6 +270,24 @@ export function registerIpc(context: MainContext): void {
     toast('info', 'Regenerando el resumen…')
   })
 
+  ipcMain.handle(IPC.foldersCreate, async (_event, path: string) => {
+    const result = await context.notes.createFolder(String(path))
+    context.broadcast({ type: 'notes-changed' })
+    return result
+  })
+  ipcMain.handle(IPC.foldersRename, async (_event, path: string, newName: string) => {
+    assertFolderChangeAllowed()
+    const result = await context.notes.renameFolder(String(path), String(newName))
+    context.broadcast({ type: 'notes-changed' })
+    return result
+  })
+  ipcMain.handle(IPC.foldersRemove, async (_event, path: string) => {
+    assertFolderChangeAllowed()
+    const result = await context.notes.removeFolder(String(path))
+    context.broadcast({ type: 'notes-changed' })
+    return result
+  })
+
   ipcMain.handle(IPC.whisperStatus, (): Promise<WhisperStatus> => context.whisper.status())
   ipcMain.handle(IPC.whisperDownloadModel, async (): Promise<WhisperStatus> => {
     const status = await context.whisper.downloadModel()
@@ -249,6 +302,52 @@ export function registerIpc(context: MainContext): void {
   ipcMain.handle(IPC.whisperCancelDownload, (): void => context.whisper.cancelDownload())
 
   ipcMain.handle(IPC.llmTest, (): Promise<LlmTestResult> => context.llm.test())
+  ipcMain.handle(IPC.jevTest, (): Promise<LlmTestResult> => context.jev.test())
+
+  ipcMain.handle(IPC.chatThreads, (_event, scope: ChatScope): ChatThreadSummary[] => {
+    if (scope !== 'note' && scope !== 'library') throw new Error('Ámbito de chat inválido')
+    return context.chat.threads(scope)
+  })
+  ipcMain.handle(
+    IPC.chatGet,
+    (_event, threadId: string): ChatThread | null => context.chat.get(String(threadId))
+  )
+  ipcMain.handle(IPC.chatOpen, (_event, input: ChatOpenInput): Promise<ChatThread> => {
+    if (!input || (input.scope !== 'note' && input.scope !== 'library')) {
+      throw new Error('Ámbito de chat inválido')
+    }
+    return context.chat.open({
+      scope: input.scope,
+      notePath: input.notePath ? String(input.notePath) : null
+    })
+  })
+  ipcMain.handle(IPC.chatCreate, (): ChatThread => context.chat.createLibrary())
+  ipcMain.handle(IPC.chatSend, (_event, input: ChatSendInput): ChatSendResult => {
+    if (!input || typeof input.threadId !== 'string') throw new Error('Conversación inválida')
+    return context.chat.send({ threadId: input.threadId, message: String(input.message ?? '') })
+  })
+  ipcMain.handle(IPC.chatRetry, (_event, threadId: string): ChatSendResult =>
+    context.chat.retry(String(threadId))
+  )
+  ipcMain.handle(IPC.chatCancel, (_event, requestId: string): void => {
+    context.chat.cancel(String(requestId))
+  })
+  ipcMain.handle(IPC.chatClear, (_event, threadId: string): ChatThread =>
+    context.chat.clear(String(threadId))
+  )
+  ipcMain.handle(IPC.chatRemove, async (_event, threadId: string): Promise<void> => {
+    await context.chat.remove(String(threadId))
+  })
+  ipcMain.handle(
+    IPC.chatUpdateFilters,
+    (_event, threadId: string, filters: ChatFilter | null): ChatThreadSummary => {
+      return context.chat.updateFilters(String(threadId), filters ?? null)
+    }
+  )
+  ipcMain.handle(IPC.chatBackup, async (_event, threadId: string): Promise<void> => {
+    await context.chat.backup(String(threadId))
+    toast('success', 'Conversación respaldada en Google Drive')
+  })
 
   ipcMain.handle(IPC.driveStatus, (): DriveStatus => context.drive.status())
   ipcMain.handle(IPC.driveConnect, async (): Promise<DriveStatus> => {

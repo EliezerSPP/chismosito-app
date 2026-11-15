@@ -10,7 +10,7 @@ Captura el micrófono y el audio del sistema al mismo tiempo, separa quién habl
 
 - Windows 11 x64.
 - Node.js 22.12 o superior (probado con Node 24).
-- npm.
+- npm o pnpm.
 - Micrófono y un dispositivo de salida de audio activos.
 - Una API key de OpenCode para el resumen (opcional: sin ella se guarda la transcripción).
 
@@ -20,15 +20,28 @@ No se necesita CMake, Visual Studio ni ffmpeg: los binarios de whisper.cpp para 
 
 ## Instalación (desarrollo)
 
+Con npm:
+
 ```powershell
 npm install
 npm run dev
 ```
 
+Con pnpm:
+
+```powershell
+pnpm install
+pnpm dev
+```
+
+La primera instalación descarga el binario de Electron. Si el binario falta (por ejemplo, tras un `pnpm install` con scripts bloqueados), `pnpm dev` lo descarga automáticamente antes de arrancar.
+
 Para generar el instalador:
 
 ```powershell
 npm run build:win
+# o
+pnpm build:win
 ```
 
 El instalador queda en `dist/`. No está firmado, así que Windows SmartScreen puede pedir confirmación.
@@ -58,6 +71,21 @@ Modelos sugeridos:
 Si la API responde que el modelo no está disponible o que el acceso está desactivado, actívalo en **OpenCode Console → Models** y revisa los créditos del workspace. También puedes probar la conexión desde **Ajustes → Resumen con LLM → Probar conexión**.
 
 El modelo se puede sobrescribir desde Ajustes sin editar el `.env`.
+
+### Jev (sugerencia de carpetas)
+
+Jev es el modelo System One de TypeSafe, disponible a través de OpenCode Console. No genera texto: recibe el resumen de la reunión y las carpetas existentes, y devuelve la carpeta que mejor encaja con una probabilidad.
+
+```dotenv
+JEV_MODEL=jev-1.13-free
+JEV_BASE_URL=https://opencode.ai/inference/systemone/v1/systemone
+```
+
+- Usa la misma `OPENCODE_API_KEY`.
+- `jev-1.13-free` es gratis por tiempo limitado; `jev-1.13` es de pago y muy económico.
+- El modelo se puede cambiar desde **Ajustes → Resumen con LLM → Modelo de Jev**.
+- **Probar Jev** valida la conexión sin procesar una nota.
+- Si no hay carpetas, Jev no tiene nada que proponer. Créalas en **Ajustes → Carpetas**.
 
 ### Google Drive (opcional)
 
@@ -116,8 +144,13 @@ WHISPER_MODEL_PATH=      # opcional: ruta a un ggml-medium personalizado
 - **Nota:** se escribe en `MeetingNotes/YYYY-MM-DD-HH-MM.md`, con el audio `YYYY-MM-DD-HH-MM.webm` al lado.
 - **Historial:** la biblioteca permite buscar por título, resumen, carpeta, etiqueta o **transcripción**, agrupa por fecha y muestra el estado de cada nota.
 - **Carpetas y etiquetas:** «Editar» permite cambiar título, etiquetas y carpeta. Al mover una nota se mueve también su audio. Las notas sin carpeta quedan en la raíz de `MeetingNotes/`.
+- **Gestionar carpetas:** en **Ajustes → Carpetas** puedes crear carpetas (incluidas subcarpetas con `/`), renombrarlas y eliminarlas. Al eliminar una carpeta, todas sus notas y audios se mueven a **Sin clasificar**. Las acciones de renombrar/eliminar se bloquean mientras hay una grabación o un procesamiento activo.
+- **Sugerencia de carpeta:** al terminar de procesar una nota nueva sin carpeta, Jev propone una carpeta existente según el título, el resumen, las decisiones y las acciones. La sugerencia aparece como banner en la nota y como chip en Biblioteca/Home; puedes **Mover**, **Elegir otra** o **Descartar**. Nunca se mueve automáticamente.
 - **Audio:** cada nota incluye un reproductor; al hacer clic en un timestamp de la transcripción salta a ese momento.
-- **Respaldo:** si Drive está conectado, puedes respaldar una nota desde su vista o todo desde Ajustes. El respaldo automático se activa al terminar el procesamiento.
+- **Preguntar por reunión:** la pestaña **Preguntar** de cada nota abre un chat sobre esa grabación. Las respuestas citan momentos `[HH:MM:SS]` y puedes hacer clic en la cita para saltar al audio.
+- **Chat global:** la entrada **Preguntar** de la barra lateral busca en todas tus reuniones. Sirve para preguntas transversales como «¿qué tareas me asignaron esta semana?». Las respuestas muestran las reuniones consultadas.
+- **Filtros del chat global:** limita por fecha (hoy, esta semana, este mes o un rango) y por carpeta. Los filtros se guardan con la conversación y se aplican antes de buscar.
+- **Respaldo:** si Drive está conectado, puedes respaldar una nota desde su vista o todo desde Ajustes. El respaldo automático se activa al terminar el procesamiento. Los chats se respaldan en `Conversaciones/` si activas **Respaldar conversaciones**.
 - **Regenerar resumen:** si el LLM falló, aparece un botón para reintentar sin volver a transcribir.
 - **Bandeja:** cerrar la ventana la oculta; la grabación y el procesamiento continúan. «Salir» desde la bandeja pide confirmación si hay trabajo en curso.
 
@@ -131,6 +164,8 @@ duration_seconds: 3720
 language: "es"
 audio: "2026-11-14-15-30.webm"
 folder: "Producto"
+suggested_folder: "Producto/Q4"
+suggested_folder_confidence: 0.91
 tags: ["q4", "planning"]
 source: "chismosito"
 llm: "deepseek-v4.1-flash"
@@ -169,7 +204,10 @@ status: "complete"
 
 - La transcripción ocurre **en tu equipo** con whisper.cpp. El audio no se envía a ningún lado durante la transcripción.
 - Solo la transcripción se envía al proveedor del LLM para generar el resumen.
-- El audio y la nota solo se suben a Google Drive si conectas Drive y activas el respaldo.
+- El chat envía al proveedor únicamente la transcripción o los fragmentos relevantes de las notas que consultes, más el historial reciente de esa conversación.
+- Jev recibe el título, el resumen, las decisiones, las acciones, los temas y los nombres/ejemplos de tus carpetas. No recibe el audio ni la transcripción completa.
+- El historial de chats vive en `%APPDATA%\chismosito\chats\` (un JSON por conversación). No se escribe dentro de las notas.
+- El audio, la nota y, si lo activas, los chats se suben a Google Drive.
 - Las API keys viven en el `.env` y nunca se envían al renderer. El refresh token de Google se guarda cifrado con DPAPI.
 - Logs locales: `%APPDATA%\chismosito\logs\app.log`.
 
@@ -179,7 +217,7 @@ status: "complete"
 
 ```
 src/
-  main/        proceso principal: audio, whisper, LLM, notas, Drive, tray
+  main/        proceso principal: audio, whisper, LLM, Jev, notas, chat, Drive, tray
   preload/     puente IPC tipado
   renderer/    React + Tailwind
   shared/      tipos y constantes compartidas
@@ -199,7 +237,7 @@ npm test
 npm run typecheck
 ```
 
-Las pruebas cubren la normalización de la URL del LLM, la fusión/deduplicación de hablantes, el formato de las notas y la escritura de WAV.
+Las pruebas cubren la normalización de la URL del LLM, la fusión/deduplicación de hablantes, el formato de las notas, la escritura de WAV, el parseo de resumen/acciones, la recuperación y filtros del chat, el almacén de conversaciones, la clasificación de carpetas con Jev y la gestión de carpetas.
 
 ---
 
@@ -210,6 +248,10 @@ Las pruebas cubren la normalización de la URL del LLM, la fusión/deduplicació
 - Los hablantes se separan en `Yo` (micrófono) y `Otros` (sistema); no hay diarización entre varios participantes remotos.
 - El loopback captura todo el audio de salida, no solo la reunión.
 - No hay firma de código ni actualizaciones automáticas en esta versión.
+- El respaldo de chats en Drive es unidireccional: no se restauran automáticamente.
+- El chat usa búsqueda por palabras clave y un planificador del LLM; no hay embeddings ni índice vectorial.
+- Jev solo puede sugerir carpetas que ya existan y nunca mueve la nota automáticamente. Si no hay carpetas, no hay sugerencia.
+- Renombrar una carpeta solo cambia el último segmento; no la mueve a otro padre. Eliminar una carpeta mueve sus notas a Sin clasificar, nunca las borra.
 - Con bocinas, el micrófono puede captar el audio del sistema. La app intenta eliminar la copia duplicada, pero se recomienda usar audífonos.
 - Si cambias el dispositivo de salida a mitad de una reunión, puede ser necesario reiniciar la captura.
 

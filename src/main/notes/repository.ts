@@ -2,18 +2,18 @@ import { shell } from 'electron'
 import { existsSync } from 'node:fs'
 import {
   copyFile,
-  mkdir,
   readdir,
   readFile,
   rename,
+  rm,
   stat,
-  unlink,
-  writeFile
+  unlink
 } from 'node:fs/promises'
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path'
 import dayjs from 'dayjs'
 import type {
   DriveSyncState,
+  FolderActionResult,
   NoteDetail,
   NoteMeta,
   NoteStatus,
@@ -23,8 +23,16 @@ import type { SettingsStore } from '../settings'
 import { ensureDir, isInside, uniquePath, writeAtomic } from '../lib/fs'
 import { log } from '../lib/logger'
 import {
+  folderParent,
+  isSameFolder,
+  joinFolder,
+  normalizeFolder,
+  normalizeFolderName
+} from './folder-paths'
+import {
   buildNoteMarkdown,
   excerptFromContent,
+  extractSummary,
   extractTranscript,
   numberField,
   parseNote,
@@ -41,6 +49,20 @@ interface CacheEntry {
   meta: NoteMeta
 }
 
+export interface NoteIndexEntry {
+  path: string
+  relativePath: string
+  baseName: string
+  title: string
+  date: string
+  dateKey: string
+  durationSeconds: number
+  folder: string
+  tags: string[]
+  status: NoteStatus
+  summary: SummaryData
+}
+
 export interface NoteWriteResult {
   summary: SummaryData | null
   transcript: string
@@ -48,11 +70,14 @@ export interface NoteWriteResult {
   status: NoteStatus
   title?: string
   topics?: string[]
+  suggestedFolder?: string | null
+  suggestedFolderConfidence?: number | null
 }
 
 export class NoteRepository {
   private cache = new Map<string, CacheEntry>()
   private contentCache = new Map<string, { mtimeMs: number; size: number; text: string }>()
+  private indexCache = new Map<string, { mtimeMs: number; size: number; entry: NoteIndexEntry }>()
   private driveStateProvider: (relativePath: string, mtimeMs: number) => {
     state: DriveSyncState
     error: string | null
@@ -85,6 +110,7 @@ export class NoteRepository {
   invalidate(): void {
     this.cache.clear()
     this.contentCache.clear()
+    this.indexCache.clear()
   }
 
   root(): string {
@@ -126,6 +152,19 @@ export class NoteRepository {
       parsed.content.match(/^#\s+(.+)$/m)?.[1]?.replace(/\s+—\s+.*$/, '').trim() ?? ''
     const title = stringField(data, 'title') || titleFromHeading || baseName
     const drive = this.driveStateProvider(relativePath, info.mtimeMs)
+    const currentFolder = this.folderOf(notePath)
+    const suggestedRaw = normalizeFolder(stringField(data, 'suggested_folder'))
+    const suggestedFolder =
+      suggestedRaw &&
+      !isSameFolder(suggestedRaw, currentFolder) &&
+      suggestedRaw.toLowerCase() !== 'sin clasificar'
+        ? suggestedRaw
+        : null
+    const suggestedConfidence = numberField(data, 'suggested_folder_confidence', 0)
+    const suggestedFolderConfidence =
+      suggestedFolder && suggestedConfidence > 0 && suggestedConfidence <= 1
+        ? suggestedConfidence
+        : null
 
     return {
       path: notePath,
@@ -138,7 +177,9 @@ export class NoteRepository {
       language: stringField(data, 'language', 'es'),
       audio: audioExists ? audioName : null,
       audioExists,
-      folder: this.folderOf(notePath),
+      folder: currentFolder,
+      suggestedFolder,
+      suggestedFolderConfidence,
       tags: tagsField(data),
       status: statusField(data),
       llm: stringField(data, 'llm') || null,
@@ -208,7 +249,7 @@ export class NoteRepository {
     ensureDir(this.root())
 
     const walk = async (dir: string, depth: number): Promise<void> => {
-      if (depth > 4) return
+      if (depth > 6) return
       const entries = await readdir(dir, { withFileTypes: true }).catch(() => [])
       for (const entry of entries) {
         if (!entry.isDirectory() || entry.name.startsWith('.')) continue
@@ -220,6 +261,201 @@ export class NoteRepository {
     }
     await walk(this.root(), 0)
     return [...folders].sort((a, b) => a.localeCompare(b, 'es'))
+  }
+
+  async createFolder(folder: string): Promise<FolderActionResult> {
+    const normalized = normalizeFolder(folder)
+    if (!normalized) throw new Error('Escribe un nombre de carpeta')
+    const absolute = resolve(this.root(), normalized)
+    if (!isInside(this.root(), absolute)) throw new Error('Carpeta fuera de MeetingNotes')
+    const existing = await this.folders()
+    if (existing.some((entry) => isSameFolder(entry, normalized))) {
+      throw new Error('La carpeta ya existe')
+    }
+    if (existsSync(absolute)) throw new Error('La carpeta ya existe')
+    ensureDir(absolute)
+    return { movedNotes: 0, removedFolders: 0 }
+  }
+
+  async renameFolder(folder: string, newName: string): Promise<FolderActionResult> {
+    const oldPath = normalizeFolder(folder)
+    const name = normalizeFolderName(newName)
+    if (!oldPath) throw new Error('La carpeta no existe')
+    if (!name) throw new Error('Escribe un nombre de carpeta válido, sin barras')
+
+    const oldAbsolute = resolve(this.root(), oldPath)
+    if (!isInside(this.root(), oldAbsolute)) throw new Error('Carpeta fuera de MeetingNotes')
+    if (!existsSync(oldAbsolute)) throw new Error('La carpeta no existe')
+    const info = await stat(oldAbsolute)
+    if (!info.isDirectory()) throw new Error('La ruta no es una carpeta')
+
+    const parent = folderParent(oldPath)
+    const newPath = joinFolder(parent, name)
+    const newAbsolute = resolve(this.root(), newPath)
+    if (!isInside(this.root(), newAbsolute)) throw new Error('Carpeta fuera de MeetingNotes')
+
+    const caseOnly = isSameFolder(newPath, oldPath) && newPath !== oldPath
+    if (newPath === oldPath) return { movedNotes: 0, removedFolders: 0 }
+    if (existsSync(newAbsolute) && !caseOnly) throw new Error('Ya existe una carpeta con ese nombre')
+
+    if (caseOnly) {
+      const temporary = join(
+        dirname(oldAbsolute),
+        `${basename(oldAbsolute)}.chismosito-rename-${Date.now()}`
+      )
+      await rename(oldAbsolute, temporary)
+      await rename(temporary, newAbsolute)
+    } else {
+      await rename(oldAbsolute, newAbsolute)
+    }
+
+    const notes = await this.walkMarkdownFiles(newAbsolute)
+    const now = new Date().toISOString()
+    for (const notePath of notes) {
+      const oldNotePath = join(oldAbsolute, relative(newAbsolute, notePath))
+      const parsed = await this.readParsed(notePath)
+      const data: Record<string, unknown> = {
+        ...parsed.data,
+        folder: this.folderOf(notePath),
+        updated_at: now
+      }
+      writeAtomic(notePath, composeWith(data, parsed.content))
+      this.cache.delete(notePath)
+      this.cache.delete(oldNotePath)
+      for (const listener of this.movedListeners) listener(oldNotePath, notePath)
+    }
+
+    await this.updateSuggestedFolderPaths(oldPath, newPath)
+    this.invalidate()
+    return { movedNotes: notes.length, removedFolders: 0 }
+  }
+
+  async removeFolder(folder: string): Promise<FolderActionResult> {
+    const normalized = normalizeFolder(folder)
+    if (!normalized) throw new Error('No se puede eliminar la carpeta raíz')
+    const absolute = resolve(this.root(), normalized)
+    if (!isInside(this.root(), absolute)) throw new Error('Carpeta fuera de MeetingNotes')
+    if (!existsSync(absolute)) throw new Error('La carpeta no existe')
+    const info = await stat(absolute)
+    if (!info.isDirectory()) throw new Error('La ruta no es una carpeta')
+
+    const notes = await this.walkMarkdownFiles(absolute)
+    const expectedAudio = new Set<string>()
+    for (const notePath of notes) {
+      const parsed = await this.readParsed(notePath)
+      const audio = stringField(parsed.data, 'audio')
+      if (audio) {
+        expectedAudio.add(resolve(dirname(notePath), audio).toLowerCase())
+      }
+    }
+
+    const files = await this.walkFiles(absolute)
+    const unexpected = files.filter((file) => {
+      if (file.toLowerCase().endsWith('.md')) return false
+      return !expectedAudio.has(file.toLowerCase())
+    })
+    if (unexpected.length > 0) {
+      const sample = unexpected.slice(0, 3).join(', ')
+      throw new Error(
+        `La carpeta contiene archivos que no son notas ni audios (${sample}). Muévelos o elimínalos manualmente antes de borrarla.`
+      )
+    }
+
+    const removedFolders = await this.countFolders(absolute)
+    let movedNotes = 0
+    for (const notePath of notes) {
+      await this.move(notePath, '')
+      movedNotes += 1
+    }
+    await rm(absolute, { recursive: true, force: true })
+    await this.updateSuggestedFolderPaths(normalized, null)
+    this.invalidate()
+    return { movedNotes, removedFolders }
+  }
+
+  async clearFolderSuggestion(notePath: string): Promise<NoteDetail> {
+    const absolute = this.resolveNotePath(notePath)
+    if (!existsSync(absolute)) throw new Error('La nota no existe')
+    const parsed = await this.readParsed(absolute)
+    const data: Record<string, unknown> = { ...parsed.data }
+    delete data.suggested_folder
+    delete data.suggested_folder_confidence
+    data.updated_at = new Date().toISOString()
+    writeAtomic(absolute, composeWith(data, parsed.content))
+    this.cache.delete(absolute)
+    const updated = await this.get(absolute)
+    if (!updated) throw new Error('No se pudo releer la nota')
+    return updated
+  }
+
+  private async walkMarkdownFiles(dir: string, depth = 0): Promise<string[]> {
+    if (depth > 6) return []
+    const entries = await readdir(dir, { withFileTypes: true }).catch(() => [])
+    const notes: string[] = []
+    for (const entry of entries) {
+      if (entry.name.startsWith('.')) continue
+      const full = join(dir, entry.name)
+      if (entry.isDirectory()) {
+        notes.push(...(await this.walkMarkdownFiles(full, depth + 1)))
+      } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.md')) {
+        notes.push(full)
+      }
+    }
+    return notes
+  }
+
+  private async walkFiles(dir: string, depth = 0): Promise<string[]> {
+    if (depth > 6) return []
+    const entries = await readdir(dir, { withFileTypes: true }).catch(() => [])
+    const files: string[] = []
+    for (const entry of entries) {
+      const full = join(dir, entry.name)
+      if (entry.isDirectory()) {
+        files.push(...(await this.walkFiles(full, depth + 1)))
+      } else if (entry.isFile()) {
+        files.push(full)
+      }
+    }
+    return files
+  }
+
+  private async countFolders(dir: string, depth = 0): Promise<number> {
+    if (depth > 6) return 0
+    const entries = await readdir(dir, { withFileTypes: true }).catch(() => [])
+    let count = 1
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      count += await this.countFolders(join(dir, entry.name), depth + 1)
+    }
+    return count
+  }
+
+  private async updateSuggestedFolderPaths(
+    oldPrefix: string,
+    newPrefix: string | null
+  ): Promise<void> {
+    if (!oldPrefix) return
+    const oldKey = oldPrefix.toLowerCase()
+    const notes = await this.walkMarkdownFiles(this.root())
+    const now = new Date().toISOString()
+    for (const notePath of notes) {
+      const parsed = await this.readParsed(notePath)
+      const suggested = normalizeFolder(stringField(parsed.data, 'suggested_folder'))
+      if (!suggested) continue
+      const key = suggested.toLowerCase()
+      if (key !== oldKey && !key.startsWith(`${oldKey}/`)) continue
+
+      const data: Record<string, unknown> = { ...parsed.data }
+      if (newPrefix === null) {
+        delete data.suggested_folder
+        delete data.suggested_folder_confidence
+      } else {
+        data.suggested_folder = `${newPrefix}${suggested.slice(oldPrefix.length)}`
+      }
+      data.updated_at = now
+      writeAtomic(notePath, composeWith(data, parsed.content))
+      this.cache.delete(notePath)
+    }
   }
 
   async get(notePath: string): Promise<NoteDetail | null> {
@@ -249,6 +485,72 @@ export class NoteRepository {
       text
     })
     return text
+  }
+
+  async index(): Promise<NoteIndexEntry[]> {
+    ensureDir(this.root())
+    const results: NoteIndexEntry[] = []
+    const seen = new Set<string>()
+
+    const walk = async (dir: string, depth: number): Promise<void> => {
+      if (depth > 6) return
+      let entries
+      try {
+        entries = await readdir(dir, { withFileTypes: true })
+      } catch {
+        return
+      }
+      for (const entry of entries) {
+        if (entry.name.startsWith('.')) continue
+        const full = join(dir, entry.name)
+        if (entry.isDirectory()) {
+          await walk(full, depth + 1)
+          continue
+        }
+        if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.md')) continue
+        try {
+          const info = await stat(full)
+          const cached = this.indexCache.get(full)
+          if (cached && cached.mtimeMs === info.mtimeMs && cached.size === info.size) {
+            results.push(cached.entry)
+            seen.add(full)
+            continue
+          }
+          const parsed = await this.readParsed(full)
+          const meta = await this.buildMeta(full, parsed)
+          const date = meta.date || info.mtime.toISOString()
+          const indexEntry: NoteIndexEntry = {
+            path: full,
+            relativePath: meta.relativePath,
+            baseName: meta.baseName,
+            title: meta.title,
+            date,
+            dateKey: dayjs(date).isValid() ? dayjs(date).format('YYYY-MM-DD') : '',
+            durationSeconds: meta.durationSeconds,
+            folder: meta.folder,
+            tags: meta.tags,
+            status: meta.status,
+            summary: extractSummary(parsed.content)
+          }
+          this.indexCache.set(full, { mtimeMs: info.mtimeMs, size: info.size, entry: indexEntry })
+          results.push(indexEntry)
+          seen.add(full)
+        } catch (error) {
+          log.warn('No se pudo indexar la nota', full, error)
+        }
+      }
+    }
+
+    await walk(this.root(), 0)
+    for (const path of [...this.indexCache.keys()]) {
+      if (!seen.has(path)) this.indexCache.delete(path)
+    }
+
+    return results.sort((a, b) => {
+      const aTime = a.dateKey || a.date
+      const bTime = b.dateKey || b.date
+      return bTime.localeCompare(aTime)
+    })
   }
 
   async search(query: string): Promise<NoteMeta[]> {
@@ -390,6 +692,8 @@ export class NoteRepository {
       audio: hasAudio ? basename(targetAudio) : null,
       updated_at: new Date().toISOString()
     }
+    delete data.suggested_folder
+    delete data.suggested_folder_confidence
     if (extra.title !== undefined) data.title = extra.title.trim() || data.title
     if (extra.tags !== undefined) {
       data.tags = [...new Set(extra.tags.map((tag) => tag.trim().toLowerCase()).filter(Boolean))].slice(0, 20)
@@ -474,6 +778,8 @@ export class NoteRepository {
       language: input.language,
       audio: input.audioFileName,
       folder: '',
+      suggestedFolder: null,
+      suggestedFolderConfidence: null,
       tags: [],
       status: 'processing',
       llm: null,
@@ -504,6 +810,8 @@ export class NoteRepository {
       language: stringField(data, 'language', 'es'),
       audio: stringField(data, 'audio') || null,
       folder: this.folderOf(absolute),
+      suggestedFolder: result.suggestedFolder ?? null,
+      suggestedFolderConfidence: result.suggestedFolderConfidence ?? null,
       tags,
       status: result.status,
       llm: result.llm,
@@ -587,22 +895,7 @@ function replaceTitle(content: string, title: string, isoDate: string): string {
   return `${heading}\n\n${content}`
 }
 
-export function normalizeFolder(folder: string): string {
-  return folder
-    .trim()
-    .replace(/\\/g, '/')
-    .split('/')
-    .map((segment) =>
-      segment
-        .normalize('NFKD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .replace(/[<>:"|?*\u0000-\u001f]/g, '-')
-        .replace(/^\.+|\.+$/g, '')
-        .trim()
-    )
-    .filter(Boolean)
-    .join('/')
-}
+export { normalizeFolder }
 
 function normalizeSearch(value: string): string {
   return value

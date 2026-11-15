@@ -74,6 +74,7 @@ export class DriveApi {
     mimeType: string
     parentId: string
     fileId?: string | null
+    name?: string
   }): Promise<DriveFile> {
     const info = await stat(options.localPath)
     if (info.size > 512 * 1024 * 1024) {
@@ -82,7 +83,7 @@ export class DriveApi {
     const content = await readFile(options.localPath)
     const token = await this.auth.accessToken()
     const metadata = {
-      name: basename(options.localPath),
+      name: options.name ?? basename(options.localPath),
       mimeType: options.mimeType,
       appProperties: { chismositoPath: options.relativePath }
     }

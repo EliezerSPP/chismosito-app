@@ -7,8 +7,10 @@ import { Logo } from './components/Logo'
 import { RecordPage } from './pages/RecordPage'
 import { LibraryPage } from './pages/LibraryPage'
 import { NotePage } from './pages/NotePage'
+import { AskPage } from './pages/AskPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { recorder } from './lib/recorder'
+import { publishChat } from './lib/chat'
 import { useAppStore } from './store'
 import { formatElapsed } from './lib/format'
 import { errorMessage } from './lib/errors'
@@ -95,6 +97,9 @@ export default function App(): React.JSX.Element {
           break
         case 'recording-state':
           break
+        case 'chat':
+          publishChat(event.event)
+          break
       }
     })
     return () => unsubscribe()
@@ -171,6 +176,7 @@ export default function App(): React.JSX.Element {
             <Route path="/" element={<RecordPage />} />
             <Route path="/library" element={<LibraryPage />} />
             <Route path="/note" element={<NotePage />} />
+            <Route path="/ask" element={<AskPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

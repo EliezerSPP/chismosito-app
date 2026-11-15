@@ -5,6 +5,7 @@ import {
   Cpu,
   Folder,
   Library,
+  MessageSquare,
   Mic,
   Settings,
   Sparkles
@@ -32,6 +33,7 @@ export function Sidebar(): React.JSX.Element {
 
   const libraryActive = location.pathname === '/library'
   const recordActive = location.pathname === '/'
+  const askActive = location.pathname === '/ask'
 
   return (
     <aside className="flex w-[248px] shrink-0 flex-col border-r border-line bg-surface/65 px-4 py-5">
@@ -57,6 +59,10 @@ export function Sidebar(): React.JSX.Element {
           <Library className="size-4" />
           Biblioteca
           <span className="ml-auto text-[11px] tabular-nums text-muted">{notes.length}</span>
+        </Link>
+        <Link to="/ask" className={cn('nav-link', askActive && 'nav-link-active')}>
+          <MessageSquare className="size-4" />
+          Preguntar
         </Link>
       </nav>
 

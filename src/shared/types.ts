@@ -33,10 +33,13 @@ export interface AppSettings {
   whisperModelPath: string | null
   keepTempWav: boolean
   llmModel: string
+  folderSuggestions: boolean
+  jevModel: string
   closeToTray: boolean
   launchAtLogin: boolean
   hotkey: string
   autoBackup: boolean
+  chatAutoBackup: boolean
   driveFolderName: string
   theme: ThemeSetting
   onboardingDismissed: boolean
@@ -49,6 +52,11 @@ export interface EnvStatus {
     baseUrl: string
     model: string
     source: 'env' | 'default'
+  }
+  jev: {
+    configured: boolean
+    baseUrl: string
+    model: string
   }
   google: {
     clientConfigured: boolean
@@ -153,6 +161,8 @@ export interface NoteMeta {
   audio: string | null
   audioExists: boolean
   folder: string
+  suggestedFolder: string | null
+  suggestedFolderConfidence: number | null
   tags: string[]
   status: NoteStatus
   llm: string | null
@@ -174,6 +184,11 @@ export interface NoteUpdateInput {
   title?: string
   tags?: string[]
   folder?: string
+}
+
+export interface FolderActionResult {
+  movedNotes: number
+  removedFolders: number
 }
 
 export interface Job {
@@ -206,6 +221,10 @@ export interface DriveStatus {
   lastBackupAt: string | null
   autoBackup: boolean
   root: string
+  chats: {
+    count: number
+    lastBackupAt: string | null
+  }
 }
 
 export interface DriveBackupSummary {
@@ -214,6 +233,11 @@ export interface DriveBackupSummary {
   skipped: number
   failed: number
   errors: string[]
+  chats: {
+    uploaded: number
+    skipped: number
+    failed: number
+  }
 }
 
 export interface DriveProgress {
@@ -229,6 +253,77 @@ export interface LlmTestResult {
   latencyMs: number
   error?: string
 }
+
+export type ChatScope = 'note' | 'library'
+
+export interface ChatFilter {
+  from: string | null
+  to: string | null
+  folder: string | null
+}
+
+export interface ChatSource {
+  notePath: string
+  title: string
+  date: string | null
+  timestamp?: string
+  seconds?: number
+}
+
+export interface ChatMessage {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  createdAt: string
+  sources?: ChatSource[]
+  error?: string | null
+}
+
+export interface ChatThread {
+  id: string
+  scope: ChatScope
+  notePath: string | null
+  noteTitle: string | null
+  title: string
+  messages: ChatMessage[]
+  filters: ChatFilter | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ChatThreadSummary {
+  id: string
+  scope: ChatScope
+  notePath: string | null
+  noteTitle: string | null
+  title: string
+  messageCount: number
+  filters: ChatFilter | null
+  updatedAt: string
+}
+
+export interface ChatOpenInput {
+  scope: ChatScope
+  notePath?: string | null
+}
+
+export interface ChatSendInput {
+  threadId: string
+  message: string
+}
+
+export interface ChatSendResult {
+  requestId: string
+  threadId: string
+  userMessage: ChatMessage
+}
+
+export type ChatStreamEvent =
+  | { type: 'started'; requestId: string; threadId: string }
+  | { type: 'status'; requestId: string; threadId: string; label: string }
+  | { type: 'delta'; requestId: string; threadId: string; text: string }
+  | { type: 'done'; requestId: string; threadId: string; message: ChatMessage }
+  | { type: 'error'; requestId: string; threadId: string; message: string }
 
 export interface AppInfo {
   version: string
@@ -251,6 +346,7 @@ export type AppEvent =
   | { type: 'drive-progress'; progress: DriveProgress }
   | { type: 'command'; command: AppCommand; notePath?: string }
   | { type: 'recording-state'; state: RecordingStateUpdate }
+  | { type: 'chat'; event: ChatStreamEvent }
   | { type: 'toast'; level: ToastLevel; message: string }
 
 export interface ChismositoApi {
@@ -288,9 +384,15 @@ export interface ChismositoApi {
     move(path: string, folder: string | null): Promise<NoteDetail>
     remove(path: string): Promise<void>
     folders(): Promise<string[]>
+    clearFolderSuggestion(path: string): Promise<NoteDetail>
     reveal(path: string): Promise<void>
     resummarize(path: string): Promise<void>
     search(query: string): Promise<NoteMeta[]>
+  }
+  folders: {
+    create(path: string): Promise<FolderActionResult>
+    rename(path: string, newName: string): Promise<FolderActionResult>
+    remove(path: string): Promise<FolderActionResult>
   }
   whisper: {
     status(): Promise<WhisperStatus>
@@ -300,6 +402,22 @@ export interface ChismositoApi {
   }
   llm: {
     test(): Promise<LlmTestResult>
+  }
+  jev: {
+    test(): Promise<LlmTestResult>
+  }
+  chat: {
+    threads(scope: ChatScope): Promise<ChatThreadSummary[]>
+    get(threadId: string): Promise<ChatThread | null>
+    open(input: ChatOpenInput): Promise<ChatThread>
+    create(): Promise<ChatThread>
+    send(input: ChatSendInput): Promise<ChatSendResult>
+    retry(threadId: string): Promise<ChatSendResult>
+    cancel(requestId: string): Promise<void>
+    clear(threadId: string): Promise<ChatThread>
+    remove(threadId: string): Promise<void>
+    updateFilters(threadId: string, filters: ChatFilter | null): Promise<ChatThreadSummary>
+    backup(threadId: string): Promise<void>
   }
   drive: {
     status(): Promise<DriveStatus>

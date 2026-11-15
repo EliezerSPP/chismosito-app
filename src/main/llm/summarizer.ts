@@ -204,6 +204,75 @@ export class LlmClient {
     }
   }
 
+  async chatJson(
+    messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
+    maxTokens = 800
+  ): Promise<unknown> {
+    return this.requestJson(messages, maxTokens)
+  }
+
+  async chatStream(
+    messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
+    options: {
+      signal?: AbortSignal
+      onDelta: (text: string) => void
+      maxTokens?: number
+      temperature?: number
+    }
+  ): Promise<{ content: string; model: string }> {
+    const config = clientConfig(this.settings)
+    if (!config.apiKey) throw new Error('Falta OPENCODE_API_KEY en el archivo .env')
+    const client = this.client()
+    const maxTokens = options.maxTokens ?? 1800
+    const temperature = options.temperature ?? 0.25
+    let content = ''
+
+    try {
+      const stream = await client.chat.completions.create(
+        {
+          model: config.model,
+          messages,
+          temperature,
+          max_tokens: maxTokens,
+          stream: true
+        },
+        { signal: options.signal }
+      )
+      for await (const chunk of stream) {
+        if (options.signal?.aborted) throw new Error('Respuesta cancelada')
+        const delta = chunk.choices[0]?.delta?.content
+        if (delta) {
+          content += delta
+          options.onDelta(delta)
+        }
+      }
+      if (!content.trim()) throw new Error('Respuesta vacía del modelo')
+      return { content, model: config.model }
+    } catch (error) {
+      const aborted =
+        options.signal?.aborted ||
+        (error instanceof Error && /abort|cancelad/i.test(error.message))
+      if (aborted) throw new Error('Respuesta cancelada')
+      if (content.trim()) {
+        throw new ChatStreamError(friendlyLlmError(error), content)
+      }
+      log.warn('Streaming del chat falló, reintentando sin streaming', error)
+      const response = await client.chat.completions.create(
+        {
+          model: config.model,
+          messages,
+          temperature,
+          max_tokens: maxTokens
+        },
+        { signal: options.signal }
+      )
+      const fallback = response.choices[0]?.message?.content ?? ''
+      if (!fallback.trim()) throw new Error(friendlyLlmError(error))
+      options.onDelta(fallback)
+      return { content: fallback, model: config.model }
+    }
+  }
+
   private async requestJson(
     messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
     maxTokens = 3000
@@ -393,7 +462,17 @@ function chunkTranscript(text: string, maxChars = 18_000, overlapChars = 1_500):
   return chunks
 }
 
-function friendlyLlmError(error: unknown): string {
+export class ChatStreamError extends Error {
+  constructor(
+    message: string,
+    readonly partial: string
+  ) {
+    super(message)
+    this.name = 'ChatStreamError'
+  }
+}
+
+export function friendlyLlmError(error: unknown): string {
   if (!error) return 'Error desconocido del LLM'
   if (error instanceof Error && error.message) {
     const message = error.message

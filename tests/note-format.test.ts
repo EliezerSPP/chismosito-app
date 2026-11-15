@@ -24,6 +24,8 @@ describe('note markdown', () => {
       language: 'es',
       audio: '2026-11-14-15-30.webm',
       folder: 'Producto',
+      suggestedFolder: 'Producto/Q4',
+      suggestedFolderConfidence: 0.91,
       tags: ['q4', 'planning'],
       status: 'complete',
       llm: 'mock-model',
@@ -37,6 +39,8 @@ describe('note markdown', () => {
     expect(parsed.data.title).toBe('Planificación Q4')
     expect(parsed.data.audio).toBe('2026-11-14-15-30.webm')
     expect(parsed.data.folder).toBe('Producto')
+    expect(parsed.data.suggested_folder).toBe('Producto/Q4')
+    expect(parsed.data.suggested_folder_confidence).toBe(0.91)
     expect(parsed.data.tags).toEqual(['q4', 'planning'])
     expect(parsed.content).toContain('## Resumen')
     expect(parsed.content).toContain('- Cinco')

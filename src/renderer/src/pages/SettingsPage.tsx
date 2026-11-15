@@ -24,6 +24,7 @@ import type { AppSettings, DownloadProgress, LlmTestResult } from '@shared/types
 import { useAppStore } from '../store'
 import { ProgressBar } from '../components/ProgressBar'
 import { ConfirmDialog } from '../components/ConfirmDialog'
+import { FolderManager } from '../components/FolderManager'
 import { errorMessage } from '../lib/errors'
 import { formatBytes, timeAgo } from '../lib/format'
 import { cn } from '../lib/cn'
@@ -37,6 +38,7 @@ export function SettingsPage(): React.JSX.Element {
   const download = useAppStore((state) => state.download)
   const driveProgress = useAppStore((state) => state.driveProgress)
   const recordingPhase = useAppStore((state) => state.recording.phase)
+  const folders = useAppStore((state) => state.folders)
   const setSettings = useAppStore((state) => state.setSettings)
   const setDrive = useAppStore((state) => state.setDrive)
   const setWhisper = useAppStore((state) => state.setWhisper)
@@ -49,6 +51,7 @@ export function SettingsPage(): React.JSX.Element {
   const [saving, setSaving] = useState(false)
   const [userName, setUserName] = useState(settings?.userName ?? '')
   const [llmModel, setLlmModel] = useState(settings?.llmModel ?? '')
+  const [jevModel, setJevModel] = useState(settings?.jevModel ?? '')
   const [driveFolder, setDriveFolder] = useState(settings?.driveFolderName ?? 'Chismosito')
   const [hotkey, setHotkey] = useState(settings?.hotkey ?? '')
   const [threads, setThreads] = useState(String(settings?.whisperThreads ?? 8))
@@ -56,6 +59,8 @@ export function SettingsPage(): React.JSX.Element {
   const [micPermissionError, setMicPermissionError] = useState<string | null>(null)
   const [testingLlm, setTestingLlm] = useState(false)
   const [llmTest, setLlmTest] = useState<LlmTestResult | null>(null)
+  const [testingJev, setTestingJev] = useState(false)
+  const [jevTest, setJevTest] = useState<LlmTestResult | null>(null)
   const [connecting, setConnecting] = useState(false)
   const [backingUp, setBackingUp] = useState(false)
   const [confirmCuda, setConfirmCuda] = useState(false)
@@ -67,6 +72,7 @@ export function SettingsPage(): React.JSX.Element {
     if (!settings) return
     setUserName(settings.userName)
     setLlmModel(settings.llmModel)
+    setJevModel(settings.jevModel)
     setDriveFolder(settings.driveFolderName)
     setHotkey(settings.hotkey)
     setThreads(String(settings.whisperThreads))
@@ -184,6 +190,21 @@ export function SettingsPage(): React.JSX.Element {
       setLlmTest({ ok: false, model: '', latencyMs: 0, error: errorMessage(error) })
     } finally {
       setTestingLlm(false)
+    }
+  }
+
+  const testJev = async (): Promise<void> => {
+    if (jevModel.trim() !== settings.jevModel) {
+      await update({ jevModel: jevModel.trim() })
+    }
+    setTestingJev(true)
+    setJevTest(null)
+    try {
+      setJevTest(await window.chismosito.jev.test())
+    } catch (error) {
+      setJevTest({ ok: false, model: '', latencyMs: 0, error: errorMessage(error) })
+    } finally {
+      setTestingJev(false)
     }
   }
 
@@ -318,6 +339,14 @@ export function SettingsPage(): React.JSX.Element {
               </button>
             </div>
           </Row>
+        </Section>
+
+        <Section
+          id="folders"
+          title="Carpetas"
+          description="Organiza tus reuniones. Al eliminar una carpeta, sus notas se mueven a Sin clasificar."
+        >
+          <FolderManager />
         </Section>
 
         <Section
@@ -583,6 +612,90 @@ export function SettingsPage(): React.JSX.Element {
             </div>
           </Row>
 
+          <Row
+            label="Sugerir carpeta al terminar"
+            hint="Jev analiza el resumen y propone una carpeta existente. Solo para notas nuevas sin carpeta."
+          >
+            <Toggle
+              checked={settings.folderSuggestions}
+              onChange={(value) => void update({ folderSuggestions: value })}
+            />
+          </Row>
+
+          <Row
+            label="Modelo de Jev"
+            hint="Jev es un modelo de decisión de OpenCode. La versión Free es gratis por tiempo limitado."
+          >
+            <div className="max-w-xl space-y-2">
+              <input
+                className="field"
+                value={jevModel}
+                onChange={(event) => setJevModel(event.target.value)}
+                onBlur={() =>
+                  jevModel !== settings.jevModel && void update({ jevModel: jevModel.trim() })
+                }
+                placeholder={env?.jev.model}
+              />
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  ['jev-1.13-free', 'Gratis'],
+                  ['jev-1.13', 'Pago']
+                ].map(([model, label]) => (
+                  <button
+                    key={model}
+                    onClick={() => {
+                      setJevModel(model)
+                      void update({ jevModel: model })
+                    }}
+                    className="chip hover:border-accent/40 hover:text-accent"
+                  >
+                    {label}: {model}
+                  </button>
+                ))}
+              </div>
+              <p className="break-all text-[10px] leading-relaxed text-muted">
+                Endpoint: {env?.jev.baseUrl}
+              </p>
+              {env && folders.length === 0 ? (
+                <p className="text-[10px] leading-relaxed text-gold">
+                  Crea al menos una carpeta en la sección Carpetas para recibir sugerencias.
+                </p>
+              ) : null}
+            </div>
+          </Row>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              className="btn-secondary h-9 text-xs"
+              onClick={() => void testJev()}
+              disabled={testingJev || !env?.jev.configured}
+            >
+              {testingJev ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="size-3.5" />
+              )}
+              Probar Jev
+            </button>
+            {jevTest ? (
+              <span
+                className={cn(
+                  'text-[11px]',
+                  jevTest.ok ? 'text-olive' : 'text-red-600 dark:text-red-300'
+                )}
+              >
+                {jevTest.ok
+                  ? `OK · ${jevTest.model} · ${jevTest.latencyMs} ms`
+                  : jevTest.error || 'Falló la conexión con Jev'}
+              </span>
+            ) : null}
+          </div>
+
+          <p className="rounded-xl border border-line bg-surface2/40 px-3 py-2 text-[11px] leading-relaxed text-muted">
+            Jev recibe el título, el resumen, las decisiones, las acciones y los temas de la
+            reunión. No recibe el audio ni la transcripción completa.
+          </p>
+
           <Row label="API key y endpoint" hint="Se leen del archivo .env; reinicia la app después de editarlo.">
             <div className="max-w-xl space-y-2">
               <code className="block break-all rounded-lg bg-surface2 px-2.5 py-2 text-[11px] text-muted">
@@ -640,6 +753,11 @@ export function SettingsPage(): React.JSX.Element {
               </span>
             ) : null}
           </div>
+
+          <p className="rounded-xl border border-line bg-surface2/40 px-3 py-2 text-[11px] leading-relaxed text-muted">
+            El chat de cada reunión y el chat global usan este mismo modelo. Solo se envía al
+            proveedor la transcripción o los fragmentos relevantes de las notas que consultes.
+          </p>
         </Section>
 
         <Section
@@ -761,6 +879,21 @@ export function SettingsPage(): React.JSX.Element {
               checked={settings.autoBackup}
               onChange={(value) => void update({ autoBackup: value })}
             />
+          </Row>
+          <Row
+            label="Respaldar conversaciones"
+            hint="Sube los chats a Conversaciones/ en Drive al terminar cada respuesta."
+          >
+            <Toggle
+              checked={settings.chatAutoBackup}
+              onChange={(value) => void update({ chatAutoBackup: value })}
+            />
+          </Row>
+          <Row label="Conversaciones en Drive" hint="Historial de chats respaldado en tu cuenta.">
+            <span className="text-xs text-muted">
+              {drive?.chats.count ?? 0} respaldada(s) · último:{' '}
+              {timeAgo(drive?.chats.lastBackupAt ?? null)}
+            </span>
           </Row>
           <p className="flex items-start gap-2 rounded-xl border border-line bg-surface2/40 px-3 py-2 text-[11px] leading-relaxed text-muted">
             <Shield className="mt-0.5 size-3.5 shrink-0" />

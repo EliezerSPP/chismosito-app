@@ -18,6 +18,8 @@ export interface NoteBuildInput {
   language: string
   audio: string | null
   folder: string
+  suggestedFolder?: string | null
+  suggestedFolderConfidence?: number | null
   tags: string[]
   status: NoteStatus
   llm: string | null
@@ -49,6 +51,8 @@ function serializeFrontmatter(data: Record<string, unknown>): string {
     'language',
     'audio',
     'folder',
+    'suggested_folder',
+    'suggested_folder_confidence',
     'tags',
     'source',
     'llm',
@@ -121,6 +125,8 @@ export function buildNoteMarkdown(input: NoteBuildInput): string {
     language: input.language,
     audio: input.audio,
     folder: input.folder,
+    suggested_folder: input.suggestedFolder ?? null,
+    suggested_folder_confidence: input.suggestedFolderConfidence ?? null,
     tags: input.tags,
     source: 'chismosito',
     llm: input.llm,
@@ -205,6 +211,80 @@ export function extractTranscript(content: string): TranscriptLine[] {
     })
   }
   return lines
+}
+
+function sectionBody(content: string, heading: string): string {
+  const marker = `## ${heading}`
+  const start = content.indexOf(marker)
+  if (start < 0) return ''
+  const lineEnd = content.indexOf('\n', start)
+  if (lineEnd < 0) return ''
+  const rest = content.slice(lineEnd + 1)
+  const nextHeading = rest.search(/^##\s+/m)
+  return nextHeading >= 0 ? rest.slice(0, nextHeading) : rest
+}
+
+function plainMarkdown(value: string): string {
+  return value
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/[*_`]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+export function extractSummary(content: string): SummaryData {
+  const summarySection = sectionBody(content, 'Resumen')
+  const summary_bullets = summarySection
+    .split(/\r?\n/)
+    .map((line) => line.match(/^\s*[-*]\s+(.+)$/)?.[1] ?? '')
+    .filter((line) => line && !/^_\(.*\)_$/.test(line.trim()))
+    .map((line) => plainMarkdown(line))
+    .filter(Boolean)
+
+  const decisionsSection = sectionBody(content, 'Decisiones')
+  const decisions = decisionsSection
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => /^[-*]\s+/.test(line) && !/^_\(.*\)_$/.test(line))
+    .map((line) => {
+      const body = line.replace(/^[-*]\s+/, '')
+      const match = body.match(/^\*\*(.+?)\*\*\s*(?:[—–-]\s*)?(.*)$/)
+      if (match) {
+        const decision = plainMarkdown(match[1])
+        const context = plainMarkdown(match[2])
+        return decision ? { decision, ...(context ? { context } : {}) } : null
+      }
+      const decision = plainMarkdown(body)
+      return decision ? { decision } : null
+    })
+    .filter((entry): entry is { decision: string; context?: string } => Boolean(entry))
+
+  const actionsSection = sectionBody(content, 'Acciones')
+  const action_items = actionsSection
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('|'))
+    .map((line) => line.split(/(?<!\\)\|/).map((cell) => cell.replace(/\\\|/g, '|').trim()))
+    .filter((cells) => cells.length >= 4)
+    .map((cells) => {
+      const task = plainMarkdown(cells[1] ?? '')
+      const owner = plainMarkdown(cells[2] ?? '')
+      const due = plainMarkdown(cells[3] ?? '')
+      return {
+        task,
+        owner: owner || 'Sin asignar',
+        due_date: /^\d{4}-\d{2}-\d{2}$/.test(due) ? due : null
+      }
+    })
+    .filter(
+      (entry) =>
+        entry.task &&
+        entry.task !== 'Acción' &&
+        entry.task !== 'Sin acciones asignadas' &&
+        !/^[-:]+$/.test(entry.task)
+    )
+
+  return { summary_bullets, decisions, action_items }
 }
 
 export function excerptFromContent(content: string, maxLength = 180): string {

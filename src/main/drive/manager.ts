@@ -11,10 +11,19 @@ import type {
 } from '@shared/types'
 import type { SettingsStore } from '../settings'
 import type { NoteRepository } from '../notes/repository'
+import type { ChatStore, ChatThreadFile } from '../chat/store'
 import { ensureDir, sha256File, writeAtomic } from '../lib/fs'
 import { log } from '../lib/logger'
 import { DriveAuth } from './auth'
 import { DriveApi } from './api'
+import {
+  chatKeyForLibrary,
+  chatKeyForNote,
+  chatRemotePathForLibrary,
+  chatRemotePathForNote,
+  parentRemotePath,
+  remoteFileName
+} from './paths'
 
 interface DriveFileState {
   fileId: string
@@ -24,18 +33,22 @@ interface DriveFileState {
 }
 
 interface DriveState {
-  version: 1
+  version: 2
   rootId: string | null
   rootName: string
   folders: Record<string, string>
   files: Record<string, DriveFileState>
+  chats: Record<string, DriveFileState>
   errors: Record<string, string>
+  chatErrors: Record<string, string>
   lastBackupAt: string | null
+  lastChatBackupAt: string | null
 }
 
 interface DriveManagerDeps {
   settings: SettingsStore
   notes: NoteRepository
+  chats: ChatStore
   emitStatus: (status: DriveStatus) => void
   emitProgress: (progress: DriveProgress) => void
   emitToast: (level: 'info' | 'success' | 'error', message: string) => void
@@ -56,23 +69,29 @@ export class DriveManager {
 
   private loadState(): DriveState {
     const empty: DriveState = {
-      version: 1,
+      version: 2,
       rootId: null,
       rootName: '',
       folders: {},
       files: {},
+      chats: {},
       errors: {},
-      lastBackupAt: null
+      chatErrors: {},
+      lastBackupAt: null,
+      lastChatBackupAt: null
     }
     try {
       if (!existsSync(this.statePath)) return empty
-      const raw = JSON.parse(require('node:fs').readFileSync(this.statePath, 'utf8')) as DriveState
+      const raw = JSON.parse(require('node:fs').readFileSync(this.statePath, 'utf8')) as Partial<DriveState>
       return {
         ...empty,
         ...raw,
+        version: 2,
         folders: raw.folders ?? {},
         files: raw.files ?? {},
-        errors: raw.errors ?? {}
+        chats: raw.chats ?? {},
+        errors: raw.errors ?? {},
+        chatErrors: raw.chatErrors ?? {}
       }
     } catch (error) {
       log.warn('No se pudo leer drive-state.json', error)
@@ -95,7 +114,11 @@ export class DriveManager {
       folderId: this.state.rootId,
       lastBackupAt: this.state.lastBackupAt,
       autoBackup: settings.autoBackup,
-      root: this.deps.notes.root()
+      root: this.deps.notes.root(),
+      chats: {
+        count: Object.keys(this.state.chats).length,
+        lastBackupAt: this.state.lastChatBackupAt
+      }
     }
   }
 
@@ -263,6 +286,70 @@ export class DriveManager {
     }
   }
 
+  private async uploadChatFile(thread: ChatThreadFile): Promise<{ skipped: boolean }> {
+    if (thread.scope === 'note' && !thread.noteRelativePath) {
+      throw new Error('La conversación no está ligada a una nota')
+    }
+    if (!existsSync(thread.filePath)) throw new Error('La conversación local ya no existe')
+
+    const info = await stat(thread.filePath)
+    const hash = await sha256File(thread.filePath)
+    const remotePath =
+      thread.scope === 'library'
+        ? chatRemotePathForLibrary(thread.id)
+        : chatRemotePathForNote(thread.noteRelativePath ?? '')
+    const key =
+      thread.scope === 'library'
+        ? chatKeyForLibrary(thread.id)
+        : chatKeyForNote(thread.noteRelativePath ?? '')
+
+    const existing = this.state.chats[key]
+    if (existing && existing.hash === hash && existing.fileId) {
+      return { skipped: true }
+    }
+
+    const parentId = await this.ensureFolderPath(parentRemotePath(remotePath))
+    let fileId: string | null = existing?.fileId ?? null
+    if (!fileId) {
+      const remote = await this.api.findFileByPath(remotePath, parentId)
+      fileId = remote?.id ?? null
+    }
+
+    const upload = async (targetId: string | null): Promise<void> => {
+      const uploaded = await this.api.uploadFile({
+        localPath: thread.filePath,
+        relativePath: remotePath,
+        mimeType: 'application/json',
+        parentId,
+        fileId: targetId,
+        name: remoteFileName(remotePath)
+      })
+      this.state.chats[key] = {
+        fileId: uploaded.id,
+        hash,
+        mtimeMs: info.mtimeMs,
+        uploadedAt: new Date().toISOString()
+      }
+      delete this.state.chatErrors[key]
+      this.state.lastChatBackupAt = new Date().toISOString()
+      this.saveState()
+    }
+
+    try {
+      await upload(fileId)
+      return { skipped: false }
+    } catch (error) {
+      const message = (error as Error).message
+      if (fileId && /404|no existe/i.test(message)) {
+        await upload(null)
+        return { skipped: false }
+      }
+      this.state.chatErrors[key] = message
+      this.saveState()
+      throw error
+    }
+  }
+
   private audioRelativePath(note: NoteMeta, audio: string): string {
     const folder = note.relativePath.includes('/')
       ? note.relativePath.slice(0, note.relativePath.lastIndexOf('/'))
@@ -315,6 +402,18 @@ export class DriveManager {
     if (!note) throw new Error('La nota no existe')
     await this.withLock(async () => {
       await this.backupInternal(note)
+      const chatFile = this.deps.chats.noteThreadForBackup(note.path)
+      if (chatFile) await this.uploadChatFile(chatFile)
+    })
+  }
+
+  async backupChat(threadId: string): Promise<void> {
+    await this.withLock(async () => {
+      if (!this.auth.connected()) throw new Error('Google Drive no está conectado')
+      const file = this.deps.chats.threadFile(threadId)
+      if (!file) throw new Error('La conversación no existe')
+      await this.uploadChatFile(file)
+      this.deps.emitStatus(this.status())
     })
   }
 
@@ -325,18 +424,21 @@ export class DriveManager {
       const candidates = all.filter(
         (note) => note.status !== 'processing' && note.status !== 'recording'
       )
+      const chatFiles = this.deps.chats.allForBackup()
+      const total = candidates.length + chatFiles.length
       const summary: DriveBackupSummary = {
-        total: candidates.length,
+        total,
         uploaded: 0,
         skipped: 0,
         failed: 0,
-        errors: []
+        errors: [],
+        chats: { uploaded: 0, skipped: 0, failed: 0 }
       }
       this.deps.emitProgress({
         active: true,
         current: '',
         completed: 0,
-        total: candidates.length
+        total
       })
 
       for (let index = 0; index < candidates.length; index += 1) {
@@ -345,7 +447,7 @@ export class DriveManager {
           active: true,
           current: note.title,
           completed: index,
-          total: candidates.length
+          total
         })
         try {
           const detail = (await this.deps.notes.get(note.path)) ?? note
@@ -358,24 +460,47 @@ export class DriveManager {
         }
       }
 
+      for (let index = 0; index < chatFiles.length; index += 1) {
+        const chat = chatFiles[index]
+        const label = chat.title || chat.noteTitle || 'Conversación'
+        this.deps.emitProgress({
+          active: true,
+          current: `Conversación: ${label}`,
+          completed: candidates.length + index,
+          total
+        })
+        try {
+          const result = await this.uploadChatFile(chat)
+          if (result.skipped) summary.chats.skipped += 1
+          else summary.chats.uploaded += 1
+        } catch (error) {
+          summary.chats.failed += 1
+          summary.errors.push(`Conversación «${label}»: ${(error as Error).message}`)
+        }
+      }
+
       this.deps.emitProgress({
         active: false,
         current: '',
-        completed: candidates.length,
-        total: candidates.length
+        completed: total,
+        total
       })
       this.state.lastBackupAt = new Date().toISOString()
       this.saveState()
       this.emit()
-      if (summary.failed > 0) {
+      const chatSummary =
+        summary.chats.uploaded + summary.chats.skipped > 0
+          ? ` · ${summary.chats.uploaded} conversación(es) subida(s), ${summary.chats.skipped} sin cambios`
+          : ''
+      if (summary.failed + summary.chats.failed > 0) {
         this.deps.emitToast(
           'error',
-          `Respaldo terminado con ${summary.failed} error(es). Revisa los detalles en Ajustes.`
+          `Respaldo terminado con ${summary.failed + summary.chats.failed} error(es). Revisa los detalles en Ajustes.`
         )
       } else {
         this.deps.emitToast(
           'success',
-          `Respaldo completo: ${summary.uploaded} archivo(s) subido(s), ${summary.skipped} sin cambios.`
+          `Respaldo completo: ${summary.uploaded} archivo(s) subido(s), ${summary.skipped} sin cambios${chatSummary}.`
         )
       }
       return summary
@@ -416,6 +541,31 @@ export class DriveManager {
           this.state.files[move.newKey] = { ...entry, uploadedAt: new Date().toISOString() }
           delete this.state.errors[move.oldKey]
         }
+
+        const oldChatKey = chatKeyForNote(oldRel)
+        const newChatKey = chatKeyForNote(newRel)
+        const chatEntry = this.state.chats[oldChatKey]
+        if (chatEntry) {
+          const oldChatRemote = chatRemotePathForNote(oldRel)
+          const newChatRemote = chatRemotePathForNote(newRel)
+          const oldChatParent = parentRemotePath(oldChatRemote)
+          const newChatParent = await this.ensureFolderPath(parentRemotePath(newChatRemote))
+          const oldChatParentId = oldChatParent
+            ? this.state.folders[oldChatParent] ?? (await this.ensureRoot())
+            : await this.ensureRoot()
+          await this.api.updateFile(chatEntry.fileId, {
+            name: remoteFileName(newChatRemote),
+            addParents: newChatParent,
+            removeParents: oldChatParentId
+          })
+          delete this.state.chats[oldChatKey]
+          this.state.chats[newChatKey] = {
+            ...chatEntry,
+            uploadedAt: new Date().toISOString()
+          }
+          delete this.state.chatErrors[oldChatKey]
+        }
+
         this.saveState()
       } catch (error) {
         log.warn('No se pudo mover el archivo en Drive', error)
@@ -444,6 +594,43 @@ export class DriveManager {
         delete this.state.files[key]
         delete this.state.errors[key]
       }
+
+      const chatKey = chatKeyForNote(rel)
+      const chatEntry = this.state.chats[chatKey]
+      if (chatEntry) {
+        try {
+          await this.api.trash(chatEntry.fileId)
+        } catch (error) {
+          log.warn('No se pudo enviar el chat a papelera en Drive', error)
+        }
+        delete this.state.chats[chatKey]
+        delete this.state.chatErrors[chatKey]
+      }
+
+      this.saveState()
+      this.emit()
+    })
+  }
+
+  handleChatDelete(thread: { id: string; scope: 'note' | 'library'; notePath: string | null }): void {
+    void this.withLock(async () => {
+      if (!this.auth.connected()) return
+      let key: string
+      if (thread.scope === 'library' || !thread.notePath) {
+        key = chatKeyForLibrary(thread.id)
+      } else {
+        const rel = relative(this.deps.notes.root(), thread.notePath).split(sep).join('/')
+        key = chatKeyForNote(rel)
+      }
+      const entry = this.state.chats[key]
+      if (!entry) return
+      try {
+        await this.api.trash(entry.fileId)
+      } catch (error) {
+        log.warn('No se pudo enviar el chat a papelera en Drive', error)
+      }
+      delete this.state.chats[key]
+      delete this.state.chatErrors[key]
       this.saveState()
       this.emit()
     })
@@ -451,5 +638,9 @@ export class DriveManager {
 
   autoBackupEnabled(): boolean {
     return this.deps.settings.get().autoBackup && this.auth.connected()
+  }
+
+  chatAutoBackupEnabled(): boolean {
+    return this.deps.settings.get().chatAutoBackup && this.auth.connected()
   }
 }

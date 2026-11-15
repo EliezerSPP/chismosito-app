@@ -27,9 +27,14 @@ export const IPC = {
   notesMove: 'notes:move',
   notesDelete: 'notes:delete',
   notesFolders: 'notes:folders',
+  notesClearFolderSuggestion: 'notes:clear-folder-suggestion',
   notesReveal: 'notes:reveal',
   notesResummarize: 'notes:resummarize',
   notesSearch: 'notes:search',
+
+  foldersCreate: 'folders:create',
+  foldersRename: 'folders:rename',
+  foldersRemove: 'folders:remove',
 
   whisperStatus: 'whisper:status',
   whisperDownloadModel: 'whisper:download-model',
@@ -37,6 +42,19 @@ export const IPC = {
   whisperCancelDownload: 'whisper:cancel-download',
 
   llmTest: 'llm:test',
+  jevTest: 'jev:test',
+
+  chatThreads: 'chat:threads',
+  chatGet: 'chat:get',
+  chatOpen: 'chat:open',
+  chatCreate: 'chat:create',
+  chatSend: 'chat:send',
+  chatRetry: 'chat:retry',
+  chatCancel: 'chat:cancel',
+  chatClear: 'chat:clear',
+  chatRemove: 'chat:remove',
+  chatUpdateFilters: 'chat:update-filters',
+  chatBackup: 'chat:backup',
 
   driveStatus: 'drive:status',
   driveConnect: 'drive:connect',

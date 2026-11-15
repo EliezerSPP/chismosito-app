@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { ChevronRight, Cloud, CloudOff, CloudUpload, Folder, Tag } from 'lucide-react'
+import { ChevronRight, Cloud, CloudOff, CloudUpload, Folder, Sparkles, Tag } from 'lucide-react'
 import type { NoteMeta } from '@shared/types'
 import { DurationBadge, StatusBadge } from './StatusBadge'
 import { noteDateLabel } from '../lib/format'
@@ -55,6 +55,21 @@ export function NoteRow({
             <span className="inline-flex items-center gap-1">
               <Folder className="size-3" />
               {note.folder}
+            </span>
+          ) : null}
+          {note.suggestedFolder ? (
+            <span
+              className="inline-flex items-center gap-1 rounded-full bg-accent-soft px-1.5 py-0.5 text-[10px] font-medium text-accent"
+              title={
+                note.suggestedFolderConfidence
+                  ? `Coincidencia del ${Math.round(
+                      note.suggestedFolderConfidence * 100
+                    )} %`
+                  : 'Sugerencia de carpeta'
+              }
+            >
+              <Sparkles className="size-2.5" />
+              Sugerencia: {note.suggestedFolder}
             </span>
           ) : null}
           {note.tags.slice(0, 2).map((tag) => (

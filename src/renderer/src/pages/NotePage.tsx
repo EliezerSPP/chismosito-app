@@ -8,8 +8,11 @@ import {
   CloudUpload,
   ExternalLink,
   FileAudio,
+  FileText,
   Folder,
+  FolderPlus,
   Loader2,
+  MessageSquare,
   Pencil,
   RefreshCw,
   Sparkles,
@@ -21,6 +24,7 @@ import { useAppStore } from '../store'
 import { DurationBadge, StatusBadge } from '../components/StatusBadge'
 import { DriveIcon } from '../components/NoteRow'
 import { TranscriptView } from '../components/TranscriptView'
+import { ChatPanel } from '../components/ChatPanel'
 import { EditNoteModal } from '../components/EditNoteModal'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { ProgressBar } from '../components/ProgressBar'
@@ -29,8 +33,9 @@ import { errorMessage } from '../lib/errors'
 import { cn } from '../lib/cn'
 
 export function NotePage(): React.JSX.Element {
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const path = searchParams.get('path') ?? ''
+  const activeTab = searchParams.get('tab') === 'chat' ? 'chat' : 'note'
   const navigate = useNavigate()
   const notesRevision = useAppStore((state) => state.notesRevision)
   const folders = useAppStore((state) => state.folders)
@@ -48,6 +53,8 @@ export function NotePage(): React.JSX.Element {
   const [confirmRegenerate, setConfirmRegenerate] = useState(false)
   const [busyBackup, setBusyBackup] = useState(false)
   const [busyRegenerate, setBusyRegenerate] = useState(false)
+  const [busySuggestion, setBusySuggestion] = useState(false)
+  const [chatThreadId, setChatThreadId] = useState<string | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
 
   const load = useCallback(async (): Promise<void> => {
@@ -75,6 +82,32 @@ export function NotePage(): React.JSX.Element {
   useEffect(() => {
     void load()
   }, [load, notesRevision])
+
+  useEffect(() => {
+    if (activeTab !== 'chat') return
+    if (!note || note.status === 'processing' || note.status === 'recording') return
+    if (note.transcript.length === 0) return
+    let cancelled = false
+    setChatThreadId(null)
+    window.chismosito.chat
+      .open({ scope: 'note', notePath: note.path })
+      .then((thread) => {
+        if (!cancelled) setChatThreadId(thread.id)
+      })
+      .catch((chatError) => {
+        if (!cancelled) pushToast('error', errorMessage(chatError))
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [activeTab, note?.path, note?.status, pushToast])
+
+  const switchTab = (tab: 'note' | 'chat'): void => {
+    const next = new URLSearchParams(searchParams)
+    if (tab === 'chat') next.set('tab', 'chat')
+    else next.delete('tab')
+    setSearchParams(next, { replace: true })
+  }
 
   const job = jobs.find((entry) => entry.notePath === path)
   const jobActive = Boolean(job && !['done', 'failed', 'cancelled'].includes(job.stage))
@@ -112,6 +145,10 @@ export function NotePage(): React.JSX.Element {
   const audioSrc = note.audio
     ? `chismosito-media://local/?path=${encodeURIComponent(`${directory}${separator}${note.audio}`)}`
     : null
+  const suggestedFolder = note.suggestedFolder
+  const suggestedExists = suggestedFolder
+    ? folders.some((folder) => folder.toLowerCase() === suggestedFolder.toLowerCase())
+    : false
 
   const seek = (seconds: number): void => {
     const audio = audioRef.current
@@ -160,6 +197,44 @@ export function NotePage(): React.JSX.Element {
       pushToast('error', errorMessage(regenerateError))
     } finally {
       setBusyRegenerate(false)
+    }
+  }
+
+  const acceptSuggestion = async (): Promise<void> => {
+    if (!note?.suggestedFolder || busySuggestion) return
+    const target = note.suggestedFolder
+    setBusySuggestion(true)
+    try {
+      const updated = await window.chismosito.notes.move(note.path, target)
+      await refreshNotes()
+      pushToast('success', `Nota movida a «${target}»`)
+      if (updated.path !== note.path) {
+        navigate(
+          `/note?path=${encodeURIComponent(updated.path)}${activeTab === 'chat' ? '&tab=chat' : ''}`,
+          { replace: true }
+        )
+      } else {
+        setNote(updated)
+      }
+    } catch (suggestionError) {
+      pushToast('error', errorMessage(suggestionError))
+    } finally {
+      setBusySuggestion(false)
+    }
+  }
+
+  const dismissSuggestion = async (): Promise<void> => {
+    if (!note || busySuggestion) return
+    setBusySuggestion(true)
+    try {
+      const updated = await window.chismosito.notes.clearFolderSuggestion(note.path)
+      setNote(updated)
+      await refreshNotes()
+      pushToast('info', 'Sugerencia descartada')
+    } catch (suggestionError) {
+      pushToast('error', errorMessage(suggestionError))
+    } finally {
+      setBusySuggestion(false)
     }
   }
 
@@ -330,6 +405,61 @@ export function NotePage(): React.JSX.Element {
         </div>
       ) : null}
 
+      {suggestedFolder ? (
+        <section className="mt-4 rounded-2xl border border-[color-mix(in_srgb,var(--accent)_30%,transparent)] bg-accent-soft/40 p-4">
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-xl bg-surface text-accent">
+              <FolderPlus className="size-4" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium">
+                Podrías guardarla en «{suggestedFolder}»
+              </p>
+              <p className="mt-0.5 text-xs leading-relaxed text-muted">
+                {note.suggestedFolderConfidence
+                  ? `Coincidencia del ${Math.round(
+                      note.suggestedFolderConfidence * 100
+                    )} % según el contenido de la reunión.`
+                  : 'Sugerencia basada en el contenido de la reunión.'}
+              </p>
+              <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void acceptSuggestion()}
+                  disabled={busySuggestion}
+                  className="btn-primary h-8 text-xs"
+                >
+                  {busySuggestion ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    <Folder className="size-3.5" />
+                  )}
+                  {suggestedExists
+                    ? `Mover a «${suggestedFolder}»`
+                    : `Crear «${suggestedFolder}» y mover`}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditOpen(true)}
+                  disabled={busySuggestion}
+                  className="btn-secondary h-8 text-xs"
+                >
+                  Elegir otra
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void dismissSuggestion()}
+                  disabled={busySuggestion}
+                  className="btn-ghost h-8 text-xs"
+                >
+                  Descartar
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+      ) : null}
+
       {audioSrc ? (
         <section className="mt-6 rounded-2xl border border-line bg-surface p-4">
           <div className="flex items-center gap-3">
@@ -359,44 +489,88 @@ export function NotePage(): React.JSX.Element {
         </div>
       )}
 
-      <article className="md mt-8">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{summaryContent}</ReactMarkdown>
-      </article>
-
-      <div className="mt-9 border-t border-line pt-6">
-        <div className="mb-3 flex items-end justify-between gap-3">
-          <div>
-            <h2 className="font-serif text-2xl">Transcripción</h2>
-            <p className="mt-0.5 text-[11px] text-muted">
-              {note.transcript.length} fragmentos · haz clic en un tiempo para escuchar ese momento
-            </p>
-          </div>
-          {note.transcript.length > 0 ? (
-            <button
-              onClick={() => setConfirmRegenerate(true)}
-              disabled={busyRegenerate || !env?.llm.configured || jobActive}
-              className={cn('btn-ghost h-8 px-2 text-[11px]', !env?.llm.configured && 'hidden')}
-              title="Volver a generar resumen, decisiones y acciones"
-            >
-              {busyRegenerate ? (
-                <Loader2 className="size-3.5 animate-spin" />
-              ) : (
-                <RefreshCw className="size-3.5" />
-              )}
-              Regenerar resumen
-            </button>
-          ) : null}
-        </div>
-
-        {note.status === 'processing' && note.transcript.length === 0 ? (
-          <div className="flex items-center gap-3 rounded-2xl border border-line bg-surface px-4 py-5 text-sm text-muted">
-            <Sparkles className="size-4 animate-pulse text-accent" />
-            La transcripción aparecerá aquí cuando termine el procesamiento.
-          </div>
-        ) : (
-          <TranscriptView lines={note.transcript} onSeek={seek} />
-        )}
+      <div className="mt-8 flex w-fit items-center gap-1 rounded-full border border-line bg-surface p-1">
+        <button
+          type="button"
+          onClick={() => switchTab('note')}
+          className={cn(
+            'inline-flex items-center gap-2 rounded-full px-4 py-1.5 text-xs font-medium transition-colors',
+            activeTab === 'note' ? 'bg-surface2 text-ink' : 'text-muted hover:text-ink'
+          )}
+        >
+          <FileText className="size-3.5" />
+          Nota
+        </button>
+        <button
+          type="button"
+          onClick={() => switchTab('chat')}
+          className={cn(
+            'inline-flex items-center gap-2 rounded-full px-4 py-1.5 text-xs font-medium transition-colors',
+            activeTab === 'chat' ? 'bg-surface2 text-ink' : 'text-muted hover:text-ink'
+          )}
+        >
+          <MessageSquare className="size-3.5" />
+          Preguntar
+        </button>
       </div>
+
+      {activeTab === 'note' ? (
+        <>
+          <article className="md mt-6">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{summaryContent}</ReactMarkdown>
+          </article>
+
+          <div className="mt-9 border-t border-line pt-6">
+            <div className="mb-3 flex items-end justify-between gap-3">
+              <div>
+                <h2 className="font-serif text-2xl">Transcripción</h2>
+                <p className="mt-0.5 text-[11px] text-muted">
+                  {note.transcript.length} fragmentos · haz clic en un tiempo para escuchar ese momento
+                </p>
+              </div>
+              {note.transcript.length > 0 ? (
+                <button
+                  onClick={() => setConfirmRegenerate(true)}
+                  disabled={busyRegenerate || !env?.llm.configured || jobActive}
+                  className={cn('btn-ghost h-8 px-2 text-[11px]', !env?.llm.configured && 'hidden')}
+                  title="Volver a generar resumen, decisiones y acciones"
+                >
+                  {busyRegenerate ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    <RefreshCw className="size-3.5" />
+                  )}
+                  Regenerar resumen
+                </button>
+              ) : null}
+            </div>
+
+            {note.status === 'processing' && note.transcript.length === 0 ? (
+              <div className="flex items-center gap-3 rounded-2xl border border-line bg-surface px-4 py-5 text-sm text-muted">
+                <Sparkles className="size-4 animate-pulse text-accent" />
+                La transcripción aparecerá aquí cuando termine el procesamiento.
+              </div>
+            ) : (
+              <TranscriptView lines={note.transcript} onSeek={seek} />
+            )}
+          </div>
+        </>
+      ) : (
+        <ChatPanel
+          threadId={chatThreadId}
+          scope="note"
+          folders={folders}
+          className="mt-5 h-[560px]"
+          onSeek={seek}
+          disabledReason={
+            note.status === 'processing' || note.status === 'recording'
+              ? 'Espera a que termine el procesamiento para preguntar sobre esta reunión.'
+              : note.transcript.length === 0
+                ? 'Esta reunión todavía no tiene transcripción. Regenera el procesamiento o graba de nuevo.'
+                : null
+          }
+        />
+      )}
 
       <EditNoteModal
         open={editOpen}

@@ -236,6 +236,48 @@
   font-size: 0.85em;
 }
 
+/* Chat */
+.chat-md {
+  font-size: 0.875rem;
+  line-height: 1.65;
+}
+.chat-md h2 {
+  margin: 1.1rem 0 0.4rem;
+  font-size: 0.68rem;
+  letter-spacing: 0.13em;
+}
+.chat-md h3 {
+  font-size: 0.95rem;
+  margin: 0.9rem 0 0.35rem;
+}
+.chat-md p:first-child,
+.chat-md ul:first-child,
+.chat-md ol:first-child,
+.chat-md table:first-child {
+  margin-top: 0;
+}
+.chat-md p:last-child,
+.chat-md ul:last-child,
+.chat-md ol:last-child,
+.chat-md table:last-child {
+  margin-bottom: 0;
+}
+.chat-md ul > li {
+  padding-left: 0.85rem;
+  margin: 0.25rem 0;
+}
+.chat-md table {
+  font-size: 0.8rem;
+  margin: 0.5rem 0 0.75rem;
+}
+.chat-md th,
+.chat-md td {
+  padding: 0.45rem 0.6rem;
+}
+.chat-md a {
+  text-underline-offset: 2px;
+}
+
 /* Motion */
 @keyframes pulse-ring {
   0% {
