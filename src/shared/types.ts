@@ -47,6 +47,21 @@ export interface AppSettings {
 
 export type LlmKeyState = 'ok' | 'missing' | 'unreadable'
 
+export interface LlmModelOption {
+  id: string
+  label: string
+}
+
+export interface LlmModelList {
+  /** true si la lista vino de /models; false si es la de respaldo. */
+  ok: boolean
+  source: 'api' | 'fallback'
+  models: LlmModelOption[]
+  error: string | null
+  /** Base URL consultada (para mostrar de dónde salió la lista). */
+  baseUrl: string
+}
+
 export interface LlmKeyStatus {
   configured: boolean
   /** Versión enmascarada de la key (nunca la key completa). */
@@ -421,6 +436,7 @@ export interface ChismositoApi {
   }
   llm: {
     test(): Promise<LlmTestResult>
+    models(): Promise<LlmModelList>
     setApiKey(key: string): Promise<LlmKeyStatus>
     clearApiKey(): Promise<LlmKeyStatus>
     scrubEnvKey(): Promise<LlmKeyStatus>
