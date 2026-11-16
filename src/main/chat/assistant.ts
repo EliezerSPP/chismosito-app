@@ -14,6 +14,7 @@ import type {
   ChatThread,
   ChatThreadSummary
 } from '@shared/types'
+import { MISSING_KEY_MESSAGE } from '@shared/constants'
 import type { SettingsStore } from '../settings'
 import type { NoteIndexEntry, NoteRepository } from '../notes/repository'
 import type { LlmClient } from '../llm/summarizer'
@@ -161,7 +162,7 @@ export class ChatAssistant {
       throw new Error('Espera a que termine la respuesta anterior')
     }
     if (!this.deps.llm.configured()) {
-      throw new Error('Falta OPENCODE_API_KEY en el archivo .env')
+      throw new Error(MISSING_KEY_MESSAGE)
     }
 
     const requestId = randomUUID()
@@ -187,7 +188,7 @@ export class ChatAssistant {
       throw new Error('Espera a que termine la respuesta anterior')
     }
     if (!this.deps.llm.configured()) {
-      throw new Error('Falta OPENCODE_API_KEY en el archivo .env')
+      throw new Error(MISSING_KEY_MESSAGE)
     }
     const lastUser = [...thread.messages].reverse().find((message) => message.role === 'user')
     if (!lastUser) throw new Error('No hay una pregunta para reintentar')

@@ -22,6 +22,7 @@ import { watch, type FSWatcher } from 'chokidar'
 import type { AppEvent, AppSettings, RecordingPhase, RecordingStateUpdate } from '@shared/types'
 import { IPC } from '@shared/constants'
 import { SettingsStore, settingsFile } from './settings'
+import { SecretStore, secretsFile } from './secrets'
 import { NoteRepository } from './notes/repository'
 import { WhisperManager } from './whisper/manager'
 import { LlmClient } from './llm/summarizer'
@@ -87,10 +88,11 @@ async function bootstrap(): Promise<void> {
   ensureEnvFile()
 
   const settings = new SettingsStore(settingsFile())
+  const secrets = new SecretStore(secretsFile())
   const notes = new NoteRepository(settings)
   const whisper = new WhisperManager(settings)
-  const llm = new LlmClient(settings)
-  const jev = new JevClient(settings)
+  const llm = new LlmClient(settings, secrets)
+  const jev = new JevClient(settings, secrets)
   const chats = new ChatStore(join(app.getPath('userData'), 'chats'), () => settings.get().notesDir)
   await chats.init()
 
@@ -143,6 +145,7 @@ async function bootstrap(): Promise<void> {
 
   const ctx: MainContext = {
     settings,
+    secrets,
     notes,
     jobs,
     sessions,

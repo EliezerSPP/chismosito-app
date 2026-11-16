@@ -353,7 +353,7 @@ export function NotePage(): React.JSX.Element {
               <p className="mt-0.5 text-xs leading-relaxed text-muted">
                 {env?.llm.configured
                   ? job?.error || 'El modelo no respondió. Puedes intentarlo de nuevo.'
-                  : 'Configura OPENCODE_API_KEY en el .env para generar el resumen.'}
+                  : 'Agrega tu API key de OpenCode en Ajustes para generar el resumen.'}
               </p>
               <div className="mt-2 flex flex-wrap gap-3 text-[11px] font-medium">
                 {env?.llm.configured ? (

@@ -45,6 +45,23 @@ export interface AppSettings {
   onboardingDismissed: boolean
 }
 
+export type LlmKeyState = 'ok' | 'missing' | 'unreadable'
+
+export interface LlmKeyStatus {
+  configured: boolean
+  /** Versión enmascarada de la key (nunca la key completa). */
+  hint: string
+  storagePath: string
+  /** 'unreadable' = el archivo existe pero no se pudo descifrar. */
+  state: LlmKeyState
+  /** false si la key quedó guardada en claro (archivo heredado sin cifrar). */
+  encrypted: boolean
+  /** Diagnóstico cuando state es 'unreadable' o el archivo no está cifrado. */
+  error: string | null
+  /** Quedó una OPENCODE_API_KEY en el .env; conviene limpiarla. */
+  keyInEnv: boolean
+}
+
 export interface EnvStatus {
   envPath: string
   llm: {
@@ -52,6 +69,7 @@ export interface EnvStatus {
     baseUrl: string
     model: string
     source: 'env' | 'default'
+    apiKey: LlmKeyStatus
   }
   jev: {
     configured: boolean
@@ -348,6 +366,7 @@ export type AppEvent =
   | { type: 'recording-state'; state: RecordingStateUpdate }
   | { type: 'chat'; event: ChatStreamEvent }
   | { type: 'toast'; level: ToastLevel; message: string }
+  | { type: 'env-changed' }
 
 export interface ChismositoApi {
   app: {
@@ -402,6 +421,9 @@ export interface ChismositoApi {
   }
   llm: {
     test(): Promise<LlmTestResult>
+    setApiKey(key: string): Promise<LlmKeyStatus>
+    clearApiKey(): Promise<LlmKeyStatus>
+    scrubEnvKey(): Promise<LlmKeyStatus>
   }
   jev: {
     test(): Promise<LlmTestResult>

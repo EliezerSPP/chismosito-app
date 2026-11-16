@@ -50,6 +50,7 @@ interface AppStore {
   refreshJobs: () => Promise<void>
   refreshWhisper: () => Promise<void>
   refreshDrive: () => Promise<void>
+  refreshEnv: () => Promise<void>
   refreshAll: () => Promise<void>
   initialize: () => Promise<void>
   setSettings: (settings: AppSettings) => void
@@ -102,6 +103,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
   refreshDrive: async () => {
     set({ drive: await window.chismosito.drive.status() })
+  },
+  refreshEnv: async () => {
+    try {
+      set({ env: await window.chismosito.env.status() })
+    } catch {
+      // sin cambios: se reintenta en el próximo evento
+    }
   },
   refreshAll: async () => {
     await Promise.allSettled([

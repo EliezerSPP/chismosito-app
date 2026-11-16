@@ -1,7 +1,9 @@
 import OpenAI from 'openai'
 import { z } from 'zod'
 import type { LlmTestResult } from '@shared/types'
+import { MISSING_KEY_MESSAGE } from '@shared/constants'
 import type { SettingsStore } from '../settings'
+import type { SecretStore } from '../secrets'
 import { getEnv } from '../env'
 import type { SummaryData } from '../notes/format'
 import { log } from '../lib/logger'
@@ -46,14 +48,18 @@ Reglas:
 Formato exacto:
 {"title":"...","summary_bullets":["...","...","...","...","..."],"decisions":[{"decision":"...","context":"..."}],"action_items":[{"task":"...","owner":"...","due_date":null}],"topics":["..."]}`
 
-function clientConfig(settings: SettingsStore): { apiKey: string; baseURL: string; model: string } {
+function clientConfig(
+  settings: SettingsStore,
+  secrets: SecretStore
+): { apiKey: string; baseURL: string; model: string } {
   const env = getEnv()
-  const model = settings.get().llmModel.trim() || env.llmModel
-  return { apiKey: env.opencodeApiKey, baseURL: env.llmBaseUrl, model }
+  const config = settings.get()
+  const model = config.llmModel.trim() || env.llmModel
+  return { apiKey: secrets.apiKey().trim(), baseURL: env.llmBaseUrl, model }
 }
 
-export function isLlmConfigured(settings: SettingsStore): boolean {
-  return clientConfig(settings).apiKey.trim().length > 0
+function isLlmConfigured(settings: SettingsStore, secrets: SecretStore): boolean {
+  return clientConfig(settings, secrets).apiKey.length > 0
 }
 
 function extractJson(text: string): unknown {
@@ -146,12 +152,15 @@ function sleep(ms: number): Promise<void> {
 }
 
 export class LlmClient {
-  constructor(private readonly settings: SettingsStore) {}
+  constructor(
+    private readonly settings: SettingsStore,
+    private readonly secrets: SecretStore
+  ) {}
 
   private client(): OpenAI {
-    const config = clientConfig(this.settings)
+    const config = clientConfig(this.settings, this.secrets)
     if (!config.apiKey) {
-      throw new Error('Falta OPENCODE_API_KEY en el archivo .env')
+      throw new Error(MISSING_KEY_MESSAGE)
     }
     return new OpenAI({
       apiKey: config.apiKey,
@@ -162,11 +171,11 @@ export class LlmClient {
   }
 
   configured(): boolean {
-    return isLlmConfigured(this.settings)
+    return isLlmConfigured(this.settings, this.secrets)
   }
 
   async test(): Promise<LlmTestResult> {
-    const config = clientConfig(this.settings)
+    const config = clientConfig(this.settings, this.secrets)
     const started = Date.now()
     try {
       const response = await this.client().chat.completions.create({
@@ -220,8 +229,8 @@ export class LlmClient {
       temperature?: number
     }
   ): Promise<{ content: string; model: string }> {
-    const config = clientConfig(this.settings)
-    if (!config.apiKey) throw new Error('Falta OPENCODE_API_KEY en el archivo .env')
+    const config = clientConfig(this.settings, this.secrets)
+    if (!config.apiKey) throw new Error(MISSING_KEY_MESSAGE)
     const client = this.client()
     const maxTokens = options.maxTokens ?? 1800
     const temperature = options.temperature ?? 0.25
@@ -278,7 +287,7 @@ export class LlmClient {
     maxTokens = 3000
   ): Promise<unknown> {
     const client = this.client()
-    const config = clientConfig(this.settings)
+    const config = clientConfig(this.settings, this.secrets)
     let lastError: unknown = null
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -314,7 +323,7 @@ export class LlmClient {
     signal?: AbortSignal
   ): Promise<SummaryResult> {
     if (!transcript.trim()) throw new Error('No hay transcripción para resumir')
-    const config = clientConfig(this.settings)
+    const config = clientConfig(this.settings, this.secrets)
     const partials: Array<z.infer<typeof partialSchema>> = []
 
     if (transcript.length > 60_000) {
@@ -486,7 +495,7 @@ export function friendlyLlmError(error: unknown): string {
       return 'El modelo no está disponible en tu cuenta de OpenCode. Actívalo en Console → Models o elige otro modelo en Ajustes.'
     }
     if (/401|invalid api key|unauthorized/i.test(message)) {
-      return 'La API key del LLM es inválida o expiró. Revisa OPENCODE_API_KEY.'
+      return 'La API key del LLM es inválida o expiró. Revísala en Ajustes → Resumen con LLM.'
     }
     if (/429|rate limit/i.test(message)) {
       return 'El proveedor del LLM está limitando solicitudes. Intenta de nuevo en unos minutos.'

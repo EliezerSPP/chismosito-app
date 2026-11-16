@@ -4,6 +4,7 @@ import { rm } from 'node:fs/promises'
 import { dirname, join, basename } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { Job, JobStage } from '@shared/types'
+import { MISSING_KEY_MESSAGE } from '@shared/constants'
 import type { SettingsStore } from '../settings'
 import type { NoteRepository } from '../notes/repository'
 import type { WhisperManager } from '../whisper/manager'
@@ -368,7 +369,7 @@ export class JobRunner {
       let summary: Awaited<ReturnType<LlmClient['summarize']>> | null = null
       let summaryError: string | null = null
       if (!this.deps.llm.configured()) {
-        summaryError = 'Falta configurar OPENCODE_API_KEY en el archivo .env'
+        summaryError = MISSING_KEY_MESSAGE
       } else {
         this.update(job, {
           stage: 'summarizing',

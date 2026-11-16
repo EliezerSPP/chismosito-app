@@ -56,7 +56,10 @@ const api: ChismositoApi = {
     cancelDownload: () => ipcRenderer.invoke(IPC.whisperCancelDownload)
   },
   llm: {
-    test: () => ipcRenderer.invoke(IPC.llmTest)
+    test: () => ipcRenderer.invoke(IPC.llmTest),
+    setApiKey: (key) => ipcRenderer.invoke(IPC.llmKeySet, key),
+    clearApiKey: () => ipcRenderer.invoke(IPC.llmKeyClear),
+    scrubEnvKey: () => ipcRenderer.invoke(IPC.llmEnvKeyScrub)
   },
   jev: {
     test: () => ipcRenderer.invoke(IPC.jevTest)

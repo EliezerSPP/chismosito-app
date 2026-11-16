@@ -31,6 +31,7 @@ export default function App(): React.JSX.Element {
   const bumpNotes = useAppStore((state) => state.bumpNotes)
   const refreshWhisper = useAppStore((state) => state.refreshWhisper)
   const refreshJobs = useAppStore((state) => state.refreshJobs)
+  const refreshEnv = useAppStore((state) => state.refreshEnv)
   const notesTimer = useRef<number | null>(null)
 
   useEffect(() => {
@@ -73,6 +74,9 @@ export default function App(): React.JSX.Element {
         case 'toast':
           pushToast(event.level, event.message)
           break
+        case 'env-changed':
+          void refreshEnv()
+          break
         case 'command':
           if (event.command === 'open-settings') {
             navigate('/settings')
@@ -108,6 +112,7 @@ export default function App(): React.JSX.Element {
     navigate,
     pushToast,
     refreshNotes,
+    refreshEnv,
     refreshWhisper,
     setDrive,
     setDriveProgress,

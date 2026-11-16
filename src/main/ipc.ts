@@ -16,6 +16,7 @@ import type {
   DriveBackupSummary,
   DriveStatus,
   EnvStatus,
+  LlmKeyStatus,
   LlmTestResult,
   NoteDetail,
   NoteMeta,
@@ -28,6 +29,7 @@ import type {
 } from '@shared/types'
 import { IPC } from '@shared/constants'
 import type { SettingsStore } from './settings'
+import type { SecretStore } from './secrets'
 import type { NoteRepository } from './notes/repository'
 import type { JobRunner } from './jobs/runner'
 import type { RecordingSessionManager } from './audio/session'
@@ -41,6 +43,7 @@ import { log } from './lib/logger'
 
 export interface MainContext {
   settings: SettingsStore
+  secrets: SecretStore
   notes: NoteRepository
   jobs: JobRunner
   sessions: RecordingSessionManager
@@ -91,13 +94,14 @@ export function registerIpc(context: MainContext): void {
     return {
       envPath: env.envPath,
       llm: {
-        configured: Boolean(env.opencodeApiKey),
+        configured: context.secrets.configured(),
         baseUrl: env.llmBaseUrl,
         model: settings.llmModel.trim() || env.llmModel,
-        source: settings.llmModel.trim() ? 'default' : 'env'
+        source: settings.llmModel.trim() ? 'default' : 'env',
+        apiKey: context.secrets.status()
       },
       jev: {
-        configured: Boolean(env.opencodeApiKey),
+        configured: context.secrets.configured(),
         baseUrl: env.jevBaseUrl,
         model: settings.jevModel.trim() || env.jevModel
       },
@@ -302,6 +306,21 @@ export function registerIpc(context: MainContext): void {
   ipcMain.handle(IPC.whisperCancelDownload, (): void => context.whisper.cancelDownload())
 
   ipcMain.handle(IPC.llmTest, (): Promise<LlmTestResult> => context.llm.test())
+  ipcMain.handle(IPC.llmKeySet, (_event, key: string): LlmKeyStatus => {
+    const status = context.secrets.setApiKey(String(key ?? ''))
+    context.broadcast({ type: 'env-changed' })
+    return status
+  })
+  ipcMain.handle(IPC.llmKeyClear, (): LlmKeyStatus => {
+    const status = context.secrets.clearApiKey()
+    context.broadcast({ type: 'env-changed' })
+    return status
+  })
+  ipcMain.handle(IPC.llmEnvKeyScrub, (): LlmKeyStatus => {
+    const status = context.secrets.scrubEnvKey()
+    context.broadcast({ type: 'env-changed' })
+    return status
+  })
   ipcMain.handle(IPC.jevTest, (): Promise<LlmTestResult> => context.jev.test())
 
   ipcMain.handle(IPC.chatThreads, (_event, scope: ChatScope): ChatThreadSummary[] => {

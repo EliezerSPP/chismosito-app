@@ -1,15 +1,13 @@
 import { app } from 'electron'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import {
-  DEFAULT_LLM_BASE_URL,
-  DEFAULT_LLM_MODEL
-} from '@shared/constants'
+import { DEFAULT_LLM_MODEL } from '@shared/constants'
 import { normalizeLlmBaseUrl } from '@shared/url'
 import { log } from './lib/logger'
 
 export interface EnvConfig {
   envPath: string
+  /** Solo para migrar una key existente a secrets.json en el primer arranque. */
   opencodeApiKey: string
   llmBaseUrl: string
   llmModel: string
@@ -104,9 +102,10 @@ export function reloadEnv(): EnvConfig {
 
 const ENV_TEMPLATE = `# Chismosito — configuración local
 # La app lee este archivo al iniciar. Reinicia después de editarlo.
+# La API key de OpenCode ya NO se guarda aquí: configúrala en
+# Ajustes → Resumen con LLM (se guarda cifrada en secrets.json).
 
 # LLM (OpenCode Zen es OpenAI-compatible)
-OPENCODE_API_KEY=
 LLM_BASE_URL=https://opencode.ai/inference
 LLM_MODEL=deepseek-v4.1-flash
 
