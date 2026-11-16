@@ -1,5 +1,8 @@
 import type { LlmTestResult } from '@shared/types'
+import { MISSING_KEY_MESSAGE } from '@shared/constants'
+import { openCodeUserAgent } from './summarizer'
 import type { SettingsStore } from '../settings'
+import type { SecretStore } from '../secrets'
 import { getEnv } from '../env'
 import { log } from '../lib/logger'
 import {
@@ -20,13 +23,16 @@ interface JevRequest {
 }
 
 export class JevClient {
-  constructor(private readonly settings: SettingsStore) {}
+  constructor(
+    private readonly settings: SettingsStore,
+    private readonly secrets: SecretStore
+  ) {}
 
   private config(): { apiKey: string; baseUrl: string; model: string } {
     const env = getEnv()
     const settings = this.settings.get()
     return {
-      apiKey: env.opencodeApiKey,
+      apiKey: this.secrets.apiKey().trim(),
       baseUrl: env.jevBaseUrl,
       model: settings.jevModel.trim() || env.jevModel
     }
@@ -38,12 +44,13 @@ export class JevClient {
 
   private async request(body: JevRequest, timeoutMs = 30_000): Promise<JevResponse> {
     const config = this.config()
-    if (!config.apiKey) throw new Error('Falta OPENCODE_API_KEY en el archivo .env')
+    if (!config.apiKey) throw new Error(MISSING_KEY_MESSAGE)
     let response: Response
     try {
       response = await fetch(config.baseUrl, {
         method: 'POST',
         headers: {
+          'User-Agent': openCodeUserAgent(),
           Authorization: `Bearer ${config.apiKey}`,
           'Content-Type': 'application/json'
         },
@@ -100,7 +107,7 @@ export class JevClient {
         ok: false,
         model: config.model,
         latencyMs: 0,
-        error: 'Falta OPENCODE_API_KEY en el archivo .env'
+        error: MISSING_KEY_MESSAGE
       }
     }
     try {
@@ -146,7 +153,7 @@ function friendlyJevError(error: unknown): string {
   if (!error) return 'Error desconocido de Jev'
   if (error instanceof Error && error.message) {
     if (/401|invalid api key|unauthorized/i.test(error.message)) {
-      return 'La API key no es válida para Jev. Revisa OPENCODE_API_KEY en el .env.'
+      return 'La API key no es válida para Jev. Revísala en Ajustes → Resumen con LLM.'
     }
     if (/403|access|disabled|not available/i.test(error.message)) {
       return 'Jev no está habilitado para esta API key. Actívalo en OpenCode Console → Models.'
@@ -178,7 +185,7 @@ async function jevError(response: Response): Promise<string> {
     }
   }
   if (response.status === 401) {
-    return 'Jev rechazó la API key (401). Revisa OPENCODE_API_KEY.'
+    return 'Jev rechazó la API key (401). Revísala en Ajustes → Resumen con LLM.'
   }
   if (response.status === 403) {
     return 'Jev no está habilitado para esta API key (403). Actívalo en OpenCode Console → Models.'

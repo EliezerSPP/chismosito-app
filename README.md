@@ -52,15 +52,24 @@ El instalador queda en `dist/`. No está firmado, así que Windows SmartScreen p
 
 ### LLM
 
-Copia `.env.example` a `.env` y completa:
+La **API key** se configura dentro de la app: **Ajustes → Resumen con LLM → API key de OpenCode**. Se guarda cifrada con DPAPI (Windows) en `%APPDATA%\chismosito\secrets.json`, nunca se envía al renderer y se aplica al instante (sin reiniciar). La misma key se usa para el resumen, el chat y Jev. Puedes quitarla desde el mismo panel.
+
+El endpoint y el modelo por defecto se siguen leyendo del `.env` (copia `.env.example` a `.env`). El default es OpenCode Go (`/go/openai/v1`), que pide el ID de modelo sin prefijo:
 
 ```dotenv
-OPENCODE_API_KEY=tu_api_key
-LLM_BASE_URL=https://opencode.ai/inference
+LLM_BASE_URL=https://opencode.ai/inference/go/openai/v1
 LLM_MODEL=deepseek-v4.1-flash
 ```
 
-`https://opencode.ai/inference` es la raíz del gateway de OpenCode. La app la normaliza automáticamente a `https://opencode.ai/inference/openai/v1`, que es la ruta compatible con el SDK de OpenAI. También puedes escribir la ruta completa; se respeta tal cual.
+Los modelos incluidos en Go (`deepseek-v4.1-flash`, `deepseek-v4-pro`, `kimi-k3.1-pro`, `glm-5.3`, `claude-haiku-5.5`, …) solo están en esa ruta. `claude-sonnet-5` no forma parte del plan Go: con él hay que cambiar `LLM_BASE_URL` a la ruta de pago por uso (`https://opencode.ai/inference/openai/v1`). Si DeepSeek aparece bloqueado, activa **Global** en Console → Settings → Privacy → Regions.
+
+La app se identifica con `User-Agent: chismosito/<versión>` y manda `x-opencode-session` con un id estable por conversación (hilo de chat o trabajo de resumen), que es lo que Go pide para enrutar y cachear por separado.
+
+Si un `.env` antiguo todavía trae `OPENCODE_API_KEY` y no existe `secrets.json`, la app la adopta una sola vez en el primer arranque, la guarda cifrada y **borra esa línea del `.env`** dejando un respaldo `.env.bak` **sin la key**. Si más adelante vuelve a aparecer una key en el `.env`, Ajustes muestra un aviso con un botón para limpiarla; la app siempre usa la de Ajustes.
+
+La key solo se escribe si Windows ofrece cifrado (DPAPI/safeStorage). Si no está disponible, la app falla cerrado y muestra el error en vez de guardar la clave en claro. Si el archivo guardado no se puede descifrar, Ajustes lo indica y permite reemplazar la key.
+
+`https://opencode.ai/inference` es la raíz del gateway de OpenCode. La app la normaliza automáticamente a `https://opencode.ai/inference/openai/v1` (pago por uso), que es la ruta compatible con el SDK de OpenAI; para OpenCode Go usa la ruta explícita `/go/openai/v1`. También puedes escribir la ruta completa; se respeta tal cual. Este comportamiento de la raíz se mantiene por compatibilidad con los `.env` existentes.
 
 Modelos sugeridos:
 
@@ -81,7 +90,7 @@ JEV_MODEL=jev-1.13-free
 JEV_BASE_URL=https://opencode.ai/inference/systemone/v1/systemone
 ```
 
-- Usa la misma `OPENCODE_API_KEY`.
+- Usa la misma API key configurada en **Ajustes → Resumen con LLM**.
 - `jev-1.13-free` es gratis por tiempo limitado; `jev-1.13` es de pago y muy económico.
 - El modelo se puede cambiar desde **Ajustes → Resumen con LLM → Modelo de Jev**.
 - **Probar Jev** valida la conexión sin procesar una nota.
@@ -134,7 +143,7 @@ WHISPER_MODEL_PATH=      # opcional: ruta a un ggml-medium personalizado
 3. **Audio del sistema:** Windows 11 lo captura mediante loopback de Chromium; no necesitas instalar controladores. En algunas configuraciones Windows muestra un indicador de captura de pantalla.
 4. **GPU opcional:** si tienes NVIDIA, descarga el pack CUDA desde Ajustes (~650 MB; ~1.4 GB en disco). En una RTX 4060, la transcripción es aproximadamente 5 veces más rápida que en CPU. Si el pack falla, la app usa CPU automáticamente.
 5. **Carpetas:** crea al menos una en **Ajustes → Carpetas** si quieres que Jev proponga dónde guardar cada reunión. Sin carpetas existentes no hay sugerencias.
-6. **API key:** configura `OPENCODE_API_KEY` para el resumen, el chat y las sugerencias. Sin clave, la transcripción y el audio siguen funcionando.
+6. **API key:** agrégala en **Ajustes → Resumen con LLM** para el resumen, el chat y las sugerencias. Sin clave, la transcripción y el audio siguen funcionando.
 
 ---
 
@@ -142,7 +151,7 @@ WHISPER_MODEL_PATH=      # opcional: ruta a un ggml-medium personalizado
 
 ### Guía rápida
 
-1. **Prepara la app la primera vez.** Descarga el modelo de transcripción y autoriza el micrófono. Si tienes NVIDIA, puedes instalar el pack CUDA para transcribir más rápido. Configura `OPENCODE_API_KEY` en el `.env` si quieres resumen automático, chat y sugerencias de carpeta.
+1. **Prepara la app la primera vez.** Descarga el modelo de transcripción y autoriza el micrófono. Si tienes NVIDIA, puedes instalar el pack CUDA para transcribir más rápido. Agrega tu API key en **Ajustes → Resumen con LLM** si quieres resumen automático, chat y sugerencias de carpeta.
 2. **Crea tus carpetas.** Entra a **Ajustes → Carpetas** y crea las categorías que uses normalmente (por ejemplo, `Producto`, `Ventas`, `Operaciones`). Puedes crear subcarpetas escribiendo `Producto/Q4`. Jev solo puede sugerir carpetas que ya existan.
 3. **Elige las fuentes de audio.** En la pantalla **Grabar** activa el micrófono y/o el audio del sistema. Usa audífonos para evitar que el micrófono capture el audio de las bocinas.
 4. **Graba la reunión.** Pulsa el botón grande o usa `Ctrl+Shift+R`. Al detener, el audio se guarda y comienza la transcripción en segundo plano. Puedes seguir usando la app o cerrarla a la bandeja.
@@ -241,7 +250,7 @@ status: "complete"
 - Jev recibe el título, el resumen, las decisiones, las acciones, los temas y los nombres/ejemplos de tus carpetas. No recibe el audio ni la transcripción completa.
 - El historial de chats vive en `%APPDATA%\chismosito\chats\` (un JSON por conversación). No se escribe dentro de las notas.
 - El audio, la nota y, si lo activas, los chats se suben a Google Drive.
-- Las API keys viven en el `.env` y nunca se envían al renderer. El refresh token de Google se guarda cifrado con DPAPI.
+- La API key vive cifrada con DPAPI en `%APPDATA%\chismosito\secrets.json` y nunca se envía al renderer (solo un hint enmascarado). El respaldo `.env.bak` se guarda sin la key. El refresh token de Google se guarda cifrado con DPAPI.
 - Logs locales: `%APPDATA%\chismosito\logs\app.log`.
 
 ---

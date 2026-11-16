@@ -379,8 +379,8 @@ export function ChatPanel({
           <Sparkles className="size-6 text-accent" />
           <h3 className="font-serif text-xl">Falta la API key</h3>
           <p className="max-w-md text-sm leading-relaxed text-muted">
-            El chat necesita el mismo proveedor de LLM que usa el resumen. Configura
-            OPENCODE_API_KEY para empezar a preguntar.
+            El chat necesita el mismo proveedor de LLM que usa el resumen. Agrega
+            tu API key de OpenCode en Ajustes para empezar a preguntar.
           </p>
           <Link to="/settings?section=llm" className="btn-secondary mt-1 text-xs">
             Configurar API key

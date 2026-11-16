@@ -7,6 +7,8 @@ import {
   CloudOff,
   Cpu,
   Download,
+  Eye,
+  EyeOff,
   ExternalLink,
   FolderOpen,
   Gauge,
@@ -18,6 +20,7 @@ import {
   Save,
   Shield,
   Sparkles,
+  Trash2,
   Volume2
 } from 'lucide-react'
 import type { AppSettings, DownloadProgress, LlmTestResult } from '@shared/types'
@@ -46,6 +49,7 @@ export function SettingsPage(): React.JSX.Element {
   const refreshNotes = useAppStore((state) => state.refreshNotes)
   const refreshWhisper = useAppStore((state) => state.refreshWhisper)
   const refreshDrive = useAppStore((state) => state.refreshDrive)
+  const refreshEnv = useAppStore((state) => state.refreshEnv)
   const [searchParams] = useSearchParams()
 
   const [saving, setSaving] = useState(false)
@@ -57,6 +61,11 @@ export function SettingsPage(): React.JSX.Element {
   const [threads, setThreads] = useState(String(settings?.whisperThreads ?? 8))
   const [devices, setDevices] = useState<Array<{ deviceId: string; label: string }>>([])
   const [micPermissionError, setMicPermissionError] = useState<string | null>(null)
+  const [apiKey, setApiKey] = useState('')
+  const [showApiKey, setShowApiKey] = useState(false)
+  const [savingApiKey, setSavingApiKey] = useState(false)
+  const [confirmClearKey, setConfirmClearKey] = useState(false)
+  const [scrubbingEnv, setScrubbingEnv] = useState(false)
   const [testingLlm, setTestingLlm] = useState(false)
   const [llmTest, setLlmTest] = useState<LlmTestResult | null>(null)
   const [testingJev, setTestingJev] = useState(false)
@@ -179,6 +188,60 @@ export function SettingsPage(): React.JSX.Element {
 
   const cancelDownload = async (): Promise<void> => {
     await window.chismosito.whisper.cancelDownload()
+  }
+
+  const saveApiKey = async (): Promise<void> => {
+    const value = apiKey.trim()
+    if (!value) {
+      pushToast('error', 'Escribe una API key')
+      return
+    }
+    setSavingApiKey(true)
+    try {
+      await window.chismosito.llm.setApiKey(value)
+      setApiKey('')
+      setLlmTest(null)
+      setJevTest(null)
+      await refreshEnv()
+      pushToast('success', 'API key guardada')
+    } catch (error) {
+      pushToast('error', errorMessage(error))
+    } finally {
+      setSavingApiKey(false)
+    }
+  }
+
+  const scrubEnvKey = async (): Promise<void> => {
+    setScrubbingEnv(true)
+    try {
+      const status = await window.chismosito.llm.scrubEnvKey()
+      await refreshEnv()
+      if (status.keyInEnv) {
+        pushToast('error', 'No se pudo eliminar OPENCODE_API_KEY del .env')
+      } else {
+        pushToast(
+          'success',
+          'OPENCODE_API_KEY eliminada del .env (respaldo .bak sin la key)'
+        )
+      }
+    } catch (error) {
+      pushToast('error', errorMessage(error))
+    } finally {
+      setScrubbingEnv(false)
+    }
+  }
+
+  const clearApiKey = async (): Promise<void> => {
+    try {
+      await window.chismosito.llm.clearApiKey()
+      setApiKey('')
+      setLlmTest(null)
+      setJevTest(null)
+      await refreshEnv()
+      pushToast('success', 'API key eliminada')
+    } catch (error) {
+      pushToast('error', errorMessage(error))
+    }
   }
 
   const testLlm = async (): Promise<void> => {
@@ -564,9 +627,123 @@ export function SettingsPage(): React.JSX.Element {
               <AlertTriangle className="size-4 text-gold" />
             )}
             <span className="font-medium">{env?.llm.configured ? 'API key configurada' : 'Falta la API key'}</span>
+            {env?.llm.configured && env.llm.apiKey.hint ? (
+              <>
+                <span className="text-muted">·</span>
+                <span className="font-mono text-muted">{env.llm.apiKey.hint}</span>
+              </>
+            ) : null}
             <span className="text-muted">·</span>
             <span className="break-all text-muted">{env?.llm.baseUrl}</span>
           </div>
+
+          {env?.llm.apiKey.state === 'unreadable' ? (
+            <div className="rounded-2xl border border-gold/40 bg-surface2/60 px-4 py-3 text-xs leading-relaxed">
+              <p className="font-medium text-ink">No se pudo cargar la API key</p>
+              <p className="mt-1 break-words text-muted">
+                {env.llm.apiKey.error ??
+                  'No se pudo leer el archivo de la key.'}{' '}
+                Si la key estaba en el .env, sigue ahí; pega la key de nuevo para reemplazarla.
+              </p>
+            </div>
+          ) : null}
+
+          {env?.llm.configured && !env.llm.apiKey.encrypted ? (
+            <div className="rounded-2xl border border-gold/40 bg-surface2/60 px-4 py-3 text-xs leading-relaxed">
+              <p className="font-medium text-ink">La API key está guardada sin cifrar</p>
+              <p className="mt-1 break-words text-muted">
+                {env.llm.apiKey.error ??
+                  'Windows no ofreció cifrado cuando se guardó.'}{' '}
+                Vuelve a guardarla para cifrarla con DPAPI.
+              </p>
+            </div>
+          ) : null}
+
+          {env?.llm.apiKey.keyInEnv ? (
+            <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-gold/40 bg-surface2/60 px-4 py-3 text-xs leading-relaxed">
+              <AlertTriangle className="size-4 shrink-0 text-gold" />
+              <span className="min-w-0 flex-1 break-words text-muted">
+                Todavía hay una <code>OPENCODE_API_KEY</code> en texto plano en el .env.{' '}
+                {env.llm.configured
+                  ? 'Chismosito usa la de Ajustes; puedes borrar la del archivo.'
+                  : 'No hay key en Ajustes: la app no usará la del archivo. Configúrala en Ajustes o bórrala.'}
+              </span>
+              <button
+                className="btn-secondary h-8 text-xs"
+                onClick={() => void scrubEnvKey()}
+                disabled={scrubbingEnv}
+              >
+                {scrubbingEnv ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <Trash2 className="size-3.5" />
+                )}
+                Limpiar .env
+              </button>
+            </div>
+          ) : null}
+
+          <Row
+            label="API key de OpenCode"
+            hint="Se guarda cifrada con DPAPI y nunca se envía al renderer."
+          >
+            <div className="max-w-xl space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  className="field flex-1"
+                  type={showApiKey ? 'text' : 'password'}
+                  autoComplete="off"
+                  spellCheck={false}
+                  value={apiKey}
+                  onChange={(event) => setApiKey(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') void saveApiKey()
+                  }}
+                  placeholder={
+                    env?.llm.apiKey.configured
+                      ? 'Pega una key nueva para reemplazarla'
+                      : 'Pega tu API key de OpenCode'
+                  }
+                />
+                <button
+                  className="btn-ghost h-9 px-2"
+                  onClick={() => setShowApiKey((value) => !value)}
+                  title={showApiKey ? 'Ocultar' : 'Mostrar'}
+                  aria-label={showApiKey ? 'Ocultar API key' : 'Mostrar API key'}
+                >
+                  {showApiKey ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                </button>
+                <button
+                  className="btn-primary h-9 text-xs"
+                  onClick={() => void saveApiKey()}
+                  disabled={savingApiKey || !apiKey.trim()}
+                >
+                  {savingApiKey ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    <Save className="size-3.5" />
+                  )}
+                  Guardar
+                </button>
+                {env?.llm.apiKey.configured ? (
+                  <button
+                    className="btn-secondary h-9 text-xs"
+                    onClick={() => setConfirmClearKey(true)}
+                  >
+                    Quitar
+                  </button>
+                ) : null}
+              </div>
+              <p className="text-[10px] leading-relaxed text-muted">
+                La misma key se usa para el resumen, el chat y Jev. Se aplica al instante, sin
+                reiniciar la app, y solo se guarda si Windows puede cifrarla (DPAPI). Créala en
+                OpenCode Console → API keys.
+              </p>
+              <p className="break-all text-[10px] leading-relaxed text-muted/70">
+                Archivo: {env?.llm.apiKey.storagePath ?? 'secrets.json'}
+              </p>
+            </div>
+          </Row>
 
           <Row label="Modelo" hint="Vacío usa el valor de LLM_MODEL del .env.">
             <div className="max-w-xl space-y-2">
@@ -597,6 +774,12 @@ export function SettingsPage(): React.JSX.Element {
                   </button>
                 ))}
               </div>
+              {llmModel === 'claude-sonnet-5' ? (
+                <p className="text-[10px] leading-relaxed text-gold">
+                  claude-sonnet-5 no está en el plan Go. Para usarlo, cambia LLM_BASE_URL a
+                  https://opencode.ai/inference/openai/v1 en el .env y reinicia la app.
+                </p>
+              ) : null}
               <p className="text-[10px] leading-relaxed text-muted">
                 Si el modelo no está disponible, actívalo en{' '}
                 <button
@@ -696,7 +879,10 @@ export function SettingsPage(): React.JSX.Element {
             reunión. No recibe el audio ni la transcripción completa.
           </p>
 
-          <Row label="API key y endpoint" hint="Se leen del archivo .env; reinicia la app después de editarlo.">
+          <Row
+            label="Endpoint y modelos por defecto"
+            hint="La URL y los modelos por defecto se leen del .env; reinicia la app después de editarlo. La API key ya no vive ahí."
+          >
             <div className="max-w-xl space-y-2">
               <code className="block break-all rounded-lg bg-surface2 px-2.5 py-2 text-[11px] text-muted">
                 {env?.envPath}
@@ -966,7 +1152,10 @@ export function SettingsPage(): React.JSX.Element {
               </button>
             </div>
           </Row>
-          <Row label="Archivo .env" hint="API keys y credenciales. Nunca se muestran en la interfaz.">
+          <Row
+            label="Archivo .env"
+            hint="Endpoints, modelos por defecto y credenciales de Google. La API key de OpenCode ya no vive aquí."
+          >
             <div className="flex flex-wrap items-center gap-2">
               <code className="max-w-[320px] truncate rounded-lg bg-surface2 px-2 py-1 text-[11px] text-muted">
                 {env?.envPath}
@@ -994,6 +1183,15 @@ export function SettingsPage(): React.JSX.Element {
         confirmLabel="Descargar"
         onClose={() => setConfirmCuda(false)}
         onConfirm={() => void downloadCuda()}
+      />
+      <ConfirmDialog
+        open={confirmClearKey}
+        title="Quitar la API key"
+        description="Se borrará de secrets.json y del respaldo .env.bak. Sin key no habrá resumen, chat ni sugerencias de carpeta; la transcripción sigue funcionando."
+        confirmLabel="Quitar"
+        destructive
+        onClose={() => setConfirmClearKey(false)}
+        onConfirm={() => void clearApiKey()}
       />
       <ConfirmDialog
         open={confirmDisconnect}
@@ -1041,9 +1239,11 @@ function Row({
 }): React.JSX.Element {
   return (
     <div className="grid gap-2 sm:grid-cols-[220px_1fr] sm:gap-5">
-      <div>
+      <div className="min-w-0">
         <p className="text-sm font-medium">{label}</p>
-        {hint ? <p className="mt-0.5 text-[11px] leading-relaxed text-muted">{hint}</p> : null}
+        {hint ? (
+          <p className="mt-0.5 break-words text-[11px] leading-relaxed text-muted">{hint}</p>
+        ) : null}
       </div>
       <div className="min-w-0">{children}</div>
     </div>

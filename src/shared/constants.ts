@@ -42,6 +42,9 @@ export const IPC = {
   whisperCancelDownload: 'whisper:cancel-download',
 
   llmTest: 'llm:test',
+  llmKeySet: 'llm:key-set',
+  llmKeyClear: 'llm:key-clear',
+  llmEnvKeyScrub: 'llm:env-key-scrub',
   jevTest: 'jev:test',
 
   chatThreads: 'chat:threads',
@@ -72,7 +75,10 @@ export const MODEL_URL =
 export const CUDA_ZIP_NAME = 'whisper-bin-win-cuda-12.4.0-x64.zip'
 export const CUDA_URL = `https://github.com/ggml-org/whisper.cpp/releases/download/b5454/${CUDA_ZIP_NAME}`
 
+export const MISSING_KEY_MESSAGE =
+  'Falta la API key de OpenCode. Agrégala en Ajustes → Resumen con LLM.'
+
 export const DEFAULT_HOTKEY = 'CommandOrControl+Shift+R'
-export const DEFAULT_LLM_BASE_URL = 'https://opencode.ai/inference/openai/v1'
+export const DEFAULT_LLM_BASE_URL = 'https://opencode.ai/inference/go/openai/v1'
 export const DEFAULT_LLM_MODEL = 'deepseek-v4.1-flash'
 export const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file'

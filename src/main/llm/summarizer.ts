@@ -1,7 +1,11 @@
 import OpenAI from 'openai'
+import { randomUUID } from 'node:crypto'
+import { app } from 'electron'
 import { z } from 'zod'
 import type { LlmTestResult } from '@shared/types'
+import { MISSING_KEY_MESSAGE } from '@shared/constants'
 import type { SettingsStore } from '../settings'
+import type { SecretStore } from '../secrets'
 import { getEnv } from '../env'
 import type { SummaryData } from '../notes/format'
 import { log } from '../lib/logger'
@@ -46,14 +50,18 @@ Reglas:
 Formato exacto:
 {"title":"...","summary_bullets":["...","...","...","...","..."],"decisions":[{"decision":"...","context":"..."}],"action_items":[{"task":"...","owner":"...","due_date":null}],"topics":["..."]}`
 
-function clientConfig(settings: SettingsStore): { apiKey: string; baseURL: string; model: string } {
+function clientConfig(
+  settings: SettingsStore,
+  secrets: SecretStore
+): { apiKey: string; baseURL: string; model: string } {
   const env = getEnv()
-  const model = settings.get().llmModel.trim() || env.llmModel
-  return { apiKey: env.opencodeApiKey, baseURL: env.llmBaseUrl, model }
+  const config = settings.get()
+  const model = config.llmModel.trim() || env.llmModel
+  return { apiKey: secrets.apiKey().trim(), baseURL: env.llmBaseUrl, model }
 }
 
-export function isLlmConfigured(settings: SettingsStore): boolean {
-  return clientConfig(settings).apiKey.trim().length > 0
+function isLlmConfigured(settings: SettingsStore, secrets: SecretStore): boolean {
+  return clientConfig(settings, secrets).apiKey.length > 0
 }
 
 function extractJson(text: string): unknown {
@@ -141,35 +149,54 @@ function normalizeTitle(value: unknown): string {
   return title.replace(/^["“]|["”]$/g, '')
 }
 
+/**
+ * OpenCode Go pide identificar al cliente y una sesión estable por conversación
+ * (hilo de chat o trabajo de resumen), para enrutar y cachear por separado.
+ */
+export function openCodeUserAgent(): string {
+  return `chismosito/${app.getVersion()}`
+}
+
+export function openCodeHeaders(sessionId: string): Record<string, string> {
+  return {
+    'User-Agent': openCodeUserAgent(),
+    'x-opencode-session': sessionId
+  }
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolvePromise) => setTimeout(resolvePromise, ms))
 }
 
 export class LlmClient {
-  constructor(private readonly settings: SettingsStore) {}
+  constructor(
+    private readonly settings: SettingsStore,
+    private readonly secrets: SecretStore
+  ) {}
 
-  private client(): OpenAI {
-    const config = clientConfig(this.settings)
+  private client(sessionId: string): OpenAI {
+    const config = clientConfig(this.settings, this.secrets)
     if (!config.apiKey) {
-      throw new Error('Falta OPENCODE_API_KEY en el archivo .env')
+      throw new Error(MISSING_KEY_MESSAGE)
     }
     return new OpenAI({
       apiKey: config.apiKey,
       baseURL: config.baseURL,
       timeout: 120_000,
-      maxRetries: 0
+      maxRetries: 0,
+      defaultHeaders: openCodeHeaders(sessionId)
     })
   }
 
   configured(): boolean {
-    return isLlmConfigured(this.settings)
+    return isLlmConfigured(this.settings, this.secrets)
   }
 
   async test(): Promise<LlmTestResult> {
-    const config = clientConfig(this.settings)
+    const config = clientConfig(this.settings, this.secrets)
     const started = Date.now()
     try {
-      const response = await this.client().chat.completions.create({
+      const response = await this.client(randomUUID()).chat.completions.create({
         model: config.model,
         messages: [
           { role: 'system', content: 'Responde únicamente con la palabra OK.' },
@@ -206,9 +233,10 @@ export class LlmClient {
 
   async chatJson(
     messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
-    maxTokens = 800
+    maxTokens = 800,
+    sessionId: string = randomUUID()
   ): Promise<unknown> {
-    return this.requestJson(messages, maxTokens)
+    return this.requestJson(messages, maxTokens, sessionId)
   }
 
   async chatStream(
@@ -218,11 +246,12 @@ export class LlmClient {
       onDelta: (text: string) => void
       maxTokens?: number
       temperature?: number
+      sessionId?: string
     }
   ): Promise<{ content: string; model: string }> {
-    const config = clientConfig(this.settings)
-    if (!config.apiKey) throw new Error('Falta OPENCODE_API_KEY en el archivo .env')
-    const client = this.client()
+    const config = clientConfig(this.settings, this.secrets)
+    if (!config.apiKey) throw new Error(MISSING_KEY_MESSAGE)
+    const client = this.client(options.sessionId ?? randomUUID())
     const maxTokens = options.maxTokens ?? 1800
     const temperature = options.temperature ?? 0.25
     let content = ''
@@ -275,10 +304,11 @@ export class LlmClient {
 
   private async requestJson(
     messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
-    maxTokens = 3000
+    maxTokens = 3000,
+    sessionId: string = randomUUID()
   ): Promise<unknown> {
-    const client = this.client()
-    const config = clientConfig(this.settings)
+    const client = this.client(sessionId)
+    const config = clientConfig(this.settings, this.secrets)
     let lastError: unknown = null
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -311,10 +341,11 @@ export class LlmClient {
   async summarize(
     transcript: string,
     context: SummaryContext,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    sessionId: string = randomUUID()
   ): Promise<SummaryResult> {
     if (!transcript.trim()) throw new Error('No hay transcripción para resumir')
-    const config = clientConfig(this.settings)
+    const config = clientConfig(this.settings, this.secrets)
     const partials: Array<z.infer<typeof partialSchema>> = []
 
     if (transcript.length > 60_000) {
@@ -323,7 +354,8 @@ export class LlmClient {
         if (signal?.aborted) throw new Error('Resumen cancelado')
         const partial = await this.requestJson(
           buildPartialMessages(chunks[i], context, i + 1, chunks.length),
-          3000
+          3000,
+          sessionId
         )
         partials.push(partialSchema.parse(partial))
       }
@@ -334,7 +366,7 @@ export class LlmClient {
       : buildMessages(transcript, context)
 
     if (signal?.aborted) throw new Error('Resumen cancelado')
-    const raw = await this.requestJson(messages, 4500)
+    const raw = await this.requestJson(messages, 4500, sessionId)
     const normalized = normalizeResult(raw, context)
 
     if (partials.length > 0 && normalized.summary.summary_bullets.length < 3) {
@@ -486,7 +518,7 @@ export function friendlyLlmError(error: unknown): string {
       return 'El modelo no está disponible en tu cuenta de OpenCode. Actívalo en Console → Models o elige otro modelo en Ajustes.'
     }
     if (/401|invalid api key|unauthorized/i.test(message)) {
-      return 'La API key del LLM es inválida o expiró. Revisa OPENCODE_API_KEY.'
+      return 'La API key del LLM es inválida o expiró. Revísala en Ajustes → Resumen con LLM.'
     }
     if (/429|rate limit/i.test(message)) {
       return 'El proveedor del LLM está limitando solicitudes. Intenta de nuevo en unos minutos.'

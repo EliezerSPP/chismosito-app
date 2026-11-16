@@ -88,7 +88,7 @@ export function SetupChecklist(): React.JSX.Element | null {
                 <p className="text-xs text-muted">
                   {llmReady
                     ? `Conectado con ${env?.llm.model}.`
-                    : 'Agrega OPENCODE_API_KEY en el archivo .env para generar resumen, decisiones y acciones.'}
+                    : 'Agrega tu API key de OpenCode en Ajustes para generar resumen, decisiones y acciones.'}
                 </p>
                 {!llmReady ? (
                   <Link to="/settings?section=llm" className="mt-2 inline-flex text-xs font-medium text-accent hover:underline">
