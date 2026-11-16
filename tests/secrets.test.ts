@@ -155,7 +155,8 @@ describe('SecretStore', () => {
     expect(cleaned).toContain('LLM_MODEL=deepseek-v4.1-flash')
     expect(cleaned).toContain('USER_NAME=Eliezer')
     expect(cleaned).toContain('secrets.json')
-    expect(readFileSync(`${envFile()}.bak`, 'utf8')).toContain('OPENCODE_API_KEY=sk-from-env-9999')
+    expect(readFileSync(`${envFile()}.bak`, 'utf8')).not.toContain('OPENCODE_API_KEY=sk-from-env-9999')
+    expect(readFileSync(`${envFile()}.bak`, 'utf8')).toContain('LLM_MODEL=deepseek-v4.1-flash')
 
     // La key ya no está en el .env, así que getEnv() deja de verla.
     reloadEnv()
@@ -177,6 +178,57 @@ describe('SecretStore', () => {
     const status = store.scrubEnvKey()
     expect(status.keyInEnv).toBe(false)
     expect(readFileSync(envFile(), 'utf8')).not.toContain('sk-again-7777')
+    expect(readFileSync(`${envFile()}.bak`, 'utf8')).not.toContain('sk-again-7777')
     expect(store.apiKey()).toBe('sk-test-abcdefgh')
+  })
+
+  it('no marca keyInEnv cuando la key solo vive en el entorno del proceso', () => {
+    process.env.OPENCODE_API_KEY = 'sk-process-7777'
+    reloadEnv()
+
+    const store = new SecretStore()
+    expect(store.apiKey()).toBe('sk-process-7777')
+    expect(store.status().keyInEnv).toBe(false)
+    expect(existsSync(envFile())).toBe(false)
+  })
+
+  it('limpia también una key comentada en el .env', () => {
+    const store = new SecretStore()
+    store.setApiKey('sk-test-abcdefgh')
+    writeFileSync(envFile(), '# OPENCODE_API_KEY=sk-commented-9999\nLLM_MODEL=deepseek-v4.1-flash\n')
+    reloadEnv()
+    expect(new SecretStore().status().keyInEnv).toBe(true)
+
+    store.scrubEnvKey()
+
+    const cleaned = readFileSync(envFile(), 'utf8')
+    expect(cleaned).not.toContain('sk-commented-9999')
+    expect(cleaned).toContain('LLM_MODEL=deepseek-v4.1-flash')
+    expect(readFileSync(`${envFile()}.bak`, 'utf8')).not.toContain('sk-commented-9999')
+  })
+
+  it('sanea un .env.bak heredado al arrancar', () => {
+    writeFileSync(`${envFile()}.bak`, 'LLM_MODEL=deepseek-v4.1-flash\nOPENCODE_API_KEY=sk-old-9999\n')
+
+    new SecretStore()
+
+    const backup = readFileSync(`${envFile()}.bak`, 'utf8')
+    expect(backup).not.toContain('sk-old-9999')
+    expect(backup).toContain('LLM_MODEL=deepseek-v4.1-flash')
+  })
+
+  it('sanea un .env.bak heredado al quitar la key', () => {
+    const store = new SecretStore()
+    store.setApiKey('sk-test-abcdefgh')
+    writeFileSync(
+      `${envFile()}.bak`,
+      'LLM_MODEL=deepseek-v4.1-flash\nOPENCODE_API_KEY=sk-old-9999\n'
+    )
+
+    store.clearApiKey()
+
+    const backup = readFileSync(`${envFile()}.bak`, 'utf8')
+    expect(backup).not.toContain('sk-old-9999')
+    expect(backup).toContain('LLM_MODEL=deepseek-v4.1-flash')
   })
 })

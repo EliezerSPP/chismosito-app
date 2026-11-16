@@ -214,9 +214,16 @@ export function SettingsPage(): React.JSX.Element {
   const scrubEnvKey = async (): Promise<void> => {
     setScrubbingEnv(true)
     try {
-      await window.chismosito.llm.scrubEnvKey()
+      const status = await window.chismosito.llm.scrubEnvKey()
       await refreshEnv()
-      pushToast('success', 'OPENCODE_API_KEY eliminada del .env (se guardó un respaldo .bak)')
+      if (status.keyInEnv) {
+        pushToast('error', 'No se pudo eliminar OPENCODE_API_KEY del .env')
+      } else {
+        pushToast(
+          'success',
+          'OPENCODE_API_KEY eliminada del .env (respaldo .bak sin la key)'
+        )
+      }
     } catch (error) {
       pushToast('error', errorMessage(error))
     } finally {
@@ -632,11 +639,11 @@ export function SettingsPage(): React.JSX.Element {
 
           {env?.llm.apiKey.state === 'unreadable' ? (
             <div className="rounded-2xl border border-gold/40 bg-surface2/60 px-4 py-3 text-xs leading-relaxed">
-              <p className="font-medium text-ink">La API key guardada no se pudo descifrar</p>
+              <p className="font-medium text-ink">No se pudo cargar la API key</p>
               <p className="mt-1 break-words text-muted">
                 {env.llm.apiKey.error ??
-                  'El archivo existe pero DPAPI no pudo leerlo.'}{' '}
-                Pega la key de nuevo para reemplazarla.
+                  'No se pudo leer el archivo de la key.'}{' '}
+                Si la key estaba en el .env, sigue ahí; pega la key de nuevo para reemplazarla.
               </p>
             </div>
           ) : null}
@@ -656,8 +663,10 @@ export function SettingsPage(): React.JSX.Element {
             <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-gold/40 bg-surface2/60 px-4 py-3 text-xs leading-relaxed">
               <AlertTriangle className="size-4 shrink-0 text-gold" />
               <span className="min-w-0 flex-1 break-words text-muted">
-                Todavía hay una <code>OPENCODE_API_KEY</code> en texto plano en el .env. Chismosito
-                usa la de Ajustes; puedes borrar la del archivo.
+                Todavía hay una <code>OPENCODE_API_KEY</code> en texto plano en el .env.{' '}
+                {env.llm.configured
+                  ? 'Chismosito usa la de Ajustes; puedes borrar la del archivo.'
+                  : 'No hay key en Ajustes: la app no usará la del archivo. Configúrala en Ajustes o bórrala.'}
               </span>
               <button
                 className="btn-secondary h-8 text-xs"
@@ -765,6 +774,12 @@ export function SettingsPage(): React.JSX.Element {
                   </button>
                 ))}
               </div>
+              {llmModel === 'claude-sonnet-5' ? (
+                <p className="text-[10px] leading-relaxed text-gold">
+                  claude-sonnet-5 no está en el plan Go. Para usarlo, cambia LLM_BASE_URL a
+                  https://opencode.ai/inference/openai/v1 en el .env y reinicia la app.
+                </p>
+              ) : null}
               <p className="text-[10px] leading-relaxed text-muted">
                 Si el modelo no está disponible, actívalo en{' '}
                 <button
@@ -1172,7 +1187,7 @@ export function SettingsPage(): React.JSX.Element {
       <ConfirmDialog
         open={confirmClearKey}
         title="Quitar la API key"
-        description="Se borrará de secrets.json. Sin key no habrá resumen, chat ni sugerencias de carpeta; la transcripción sigue funcionando."
+        description="Se borrará de secrets.json y del respaldo .env.bak. Sin key no habrá resumen, chat ni sugerencias de carpeta; la transcripción sigue funcionando."
         confirmLabel="Quitar"
         destructive
         onClose={() => setConfirmClearKey(false)}

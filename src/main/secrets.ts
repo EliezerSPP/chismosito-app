@@ -1,5 +1,5 @@
 import { app, safeStorage } from 'electron'
-import { copyFileSync, existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { LlmKeyStatus } from '@shared/types'
 import { getEnv, reloadEnv } from './env'
@@ -7,7 +7,27 @@ import { writeAtomic } from './lib/fs'
 import { log } from './lib/logger'
 
 const MAX_KEY_LENGTH = 200
-const ENV_KEY_LINE = /^\s*(?:export\s+)?OPENCODE_API_KEY\s*=.*$/i
+const ENV_KEY_LINE = /^\s*(?:#+\s*)?(?:export\s+)?OPENCODE_API_KEY\s*=.*$/i
+
+/** Devuelve el contenido sin líneas activas de OPENCODE_API_KEY. */
+function stripEnvKey(content: string): string {
+  return content
+    .split(/\r?\n/)
+    .filter((line) => !ENV_KEY_LINE.test(line))
+    .join('\n')
+}
+
+/** Comprueba el archivo .env (no process.env), para no avisar de una key que no está ahí. */
+function envFileHasKey(envPath: string): boolean {
+  if (!envPath || !existsSync(envPath)) return false
+  try {
+    return readFileSync(envPath, 'utf8')
+      .split(/\r?\n/)
+      .some((line) => ENV_KEY_LINE.test(line))
+  } catch {
+    return false
+  }
+}
 
 interface SecretsFile {
   version: 1
@@ -38,6 +58,9 @@ export class SecretStore {
   }
 
   private load(): void {
+    // Sanea respaldos de versiones anteriores que todavía tengan la key.
+    const backupError = sanitizeEnvBackup(getEnv().envPath)
+    if (backupError) log.warn('No se pudo sanear .env.bak', backupError)
     if (!existsSync(this.filePath)) {
       this.migrateFromEnv()
       return
@@ -77,8 +100,8 @@ export class SecretStore {
 
   /**
    * Compatibilidad: si todavía no existe secrets.json y el .env trae una key,
-   * se adopta una sola vez, se guarda cifrada y se elimina del .env (con
-   * respaldo) para no dejar una copia en claro.
+   * se adopta una sola vez, se guarda cifrada y se elimina del .env (con un
+   * respaldo .env.bak sin la key) para no dejar una copia en claro.
    */
   private migrateFromEnv(): void {
     const env = getEnv()
@@ -162,11 +185,17 @@ export class SecretStore {
     this.persistKey('')
     this.key = ''
     this.error = null
+    const backupError = sanitizeEnvBackup(getEnv().envPath)
     log.info('API key de OpenCode eliminada desde Ajustes')
+    if (backupError) {
+      throw new Error(
+        `La API key se borró, pero no se pudo limpiar el respaldo .env.bak: ${backupError}`
+      )
+    }
     return this.status()
   }
 
-  /** Borra una OPENCODE_API_KEY que haya quedado en el .env (con respaldo). */
+  /** Borra una OPENCODE_API_KEY que haya quedado en el .env (respaldo sin la key). */
   scrubEnvKey(): LlmKeyStatus {
     const result = scrubEnvKey(getEnv().envPath)
     if (result.error) throw new Error(result.error)
@@ -183,7 +212,7 @@ export class SecretStore {
       state: configured ? 'ok' : this.error ? 'unreadable' : 'missing',
       encrypted: this.encrypted,
       error: this.error,
-      keyInEnv: getEnv().opencodeApiKey.trim().length > 0
+      keyInEnv: envFileHasKey(getEnv().envPath)
     }
   }
 }
@@ -195,8 +224,9 @@ export interface ScrubResult {
 }
 
 /**
- * Quita `OPENCODE_API_KEY` del archivo .env y deja un respaldo si no existía.
- * También recarga la configuración en memoria para que deje de verse la key.
+ * Quita `OPENCODE_API_KEY` del archivo .env y deja un respaldo `.env.bak`
+ * **sin la key** (conserva el resto de la configuración). También recarga la
+ * configuración en memoria para que deje de verse la key.
  */
 export function scrubEnvKey(envPath: string): ScrubResult {
   if (!envPath || !existsSync(envPath)) return { removed: false, backupPath: null }
@@ -207,18 +237,18 @@ export function scrubEnvKey(envPath: string): ScrubResult {
       return { removed: false, backupPath: null }
     }
     const backupPath = `${envPath}.bak`
-    if (!existsSync(backupPath)) {
-      try {
-        copyFileSync(envPath, backupPath)
-      } catch (error) {
-        return {
-          removed: false,
-          backupPath: null,
-          error: `No se pudo respaldar el .env antes de limpiarlo: ${(error as Error).message}`
-        }
+    const sanitized = stripEnvKey(content)
+    try {
+      // Se sobrescribe siempre para sanear también un .bak de una versión previa.
+      writeAtomic(backupPath, sanitized)
+    } catch (error) {
+      return {
+        removed: false,
+        backupPath: null,
+        error: `No se pudo respaldar el .env antes de limpiarlo: ${(error as Error).message}`
       }
     }
-    const cleaned = lines.filter((line) => !ENV_KEY_LINE.test(line))
+    const cleaned = sanitized.split('\n')
     const note =
       '# OPENCODE_API_KEY se movió a Ajustes → Resumen con LLM (secrets.json, cifrado con DPAPI).'
     const firstContent = cleaned.findIndex((line) => line.trim().length > 0)
@@ -228,6 +258,25 @@ export function scrubEnvKey(envPath: string): ScrubResult {
     return { removed: true, backupPath }
   } catch (error) {
     return { removed: false, backupPath: null, error: (error as Error).message }
+  }
+}
+
+/**
+ * Sanea un `.env.bak` heredado que todavía contenga OPENCODE_API_KEY.
+ * Devuelve el error si no se pudo limpiar; null si quedó bien o no existía.
+ */
+function sanitizeEnvBackup(envPath: string): string | null {
+  if (!envPath) return null
+  const backupPath = `${envPath}.bak`
+  if (!existsSync(backupPath)) return null
+  try {
+    const content = readFileSync(backupPath, 'utf8')
+    if (!content.split(/\r?\n/).some((line) => ENV_KEY_LINE.test(line))) return null
+    writeAtomic(backupPath, stripEnvKey(content))
+    log.info('Respaldo .env.bak saneado: se eliminó OPENCODE_API_KEY')
+    return null
+  } catch (error) {
+    return (error as Error).message
   }
 }
 

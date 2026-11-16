@@ -61,15 +61,15 @@ LLM_BASE_URL=https://opencode.ai/inference/go/openai/v1
 LLM_MODEL=deepseek-v4.1-flash
 ```
 
-Los modelos incluidos en Go (`deepseek-v4.1-flash`, `deepseek-v4-pro`, `kimi-k3.1-pro`, `glm-5.3`, `claude-haiku-5.5`, …) solo están en esa ruta. `claude-sonnet-5` no forma parte del plan Go: con él hay que cambiar `LLM_BASE_URL` a la ruta de pago por uso (`https://opencode.ai/inference`). Si DeepSeek aparece bloqueado, activa **Global** en Console → Settings → Privacy → Regions.
+Los modelos incluidos en Go (`deepseek-v4.1-flash`, `deepseek-v4-pro`, `kimi-k3.1-pro`, `glm-5.3`, `claude-haiku-5.5`, …) solo están en esa ruta. `claude-sonnet-5` no forma parte del plan Go: con él hay que cambiar `LLM_BASE_URL` a la ruta de pago por uso (`https://opencode.ai/inference/openai/v1`). Si DeepSeek aparece bloqueado, activa **Global** en Console → Settings → Privacy → Regions.
 
 La app se identifica con `User-Agent: chismosito/<versión>` y manda `x-opencode-session` con un id estable por conversación (hilo de chat o trabajo de resumen), que es lo que Go pide para enrutar y cachear por separado.
 
-Si un `.env` antiguo todavía trae `OPENCODE_API_KEY` y no existe `secrets.json`, la app la adopta una sola vez en el primer arranque, la guarda cifrada y **borra esa línea del `.env`** dejando un respaldo `.env.bak`. Si más adelante vuelve a aparecer una key en el `.env`, Ajustes muestra un aviso con un botón para limpiarla; la app siempre usa la de Ajustes.
+Si un `.env` antiguo todavía trae `OPENCODE_API_KEY` y no existe `secrets.json`, la app la adopta una sola vez en el primer arranque, la guarda cifrada y **borra esa línea del `.env`** dejando un respaldo `.env.bak` **sin la key**. Si más adelante vuelve a aparecer una key en el `.env`, Ajustes muestra un aviso con un botón para limpiarla; la app siempre usa la de Ajustes.
 
 La key solo se escribe si Windows ofrece cifrado (DPAPI/safeStorage). Si no está disponible, la app falla cerrado y muestra el error en vez de guardar la clave en claro. Si el archivo guardado no se puede descifrar, Ajustes lo indica y permite reemplazar la key.
 
-`https://opencode.ai/inference` es la raíz del gateway de OpenCode. La app la normaliza automáticamente a `https://opencode.ai/inference/openai/v1`, que es la ruta compatible con el SDK de OpenAI. También puedes escribir la ruta completa; se respeta tal cual.
+`https://opencode.ai/inference` es la raíz del gateway de OpenCode. La app la normaliza automáticamente a `https://opencode.ai/inference/openai/v1` (pago por uso), que es la ruta compatible con el SDK de OpenAI; para OpenCode Go usa la ruta explícita `/go/openai/v1`. También puedes escribir la ruta completa; se respeta tal cual. Este comportamiento de la raíz se mantiene por compatibilidad con los `.env` existentes.
 
 Modelos sugeridos:
 
@@ -250,7 +250,7 @@ status: "complete"
 - Jev recibe el título, el resumen, las decisiones, las acciones, los temas y los nombres/ejemplos de tus carpetas. No recibe el audio ni la transcripción completa.
 - El historial de chats vive en `%APPDATA%\chismosito\chats\` (un JSON por conversación). No se escribe dentro de las notas.
 - El audio, la nota y, si lo activas, los chats se suben a Google Drive.
-- La API key vive cifrada con DPAPI en `%APPDATA%\chismosito\secrets.json` y nunca se envía al renderer (solo un hint enmascarado). El refresh token de Google se guarda cifrado con DPAPI.
+- La API key vive cifrada con DPAPI en `%APPDATA%\chismosito\secrets.json` y nunca se envía al renderer (solo un hint enmascarado). El respaldo `.env.bak` se guarda sin la key. El refresh token de Google se guarda cifrado con DPAPI.
 - Logs locales: `%APPDATA%\chismosito\logs\app.log`.
 
 ---
