@@ -30,6 +30,8 @@ export interface AppSettings {
   recordSystem: boolean
   whisperDevice: WhisperDevice
   whisperThreads: number
+  /** Id del catálogo ('' = automático según el equipo). */
+  whisperModel: string
   whisperModelPath: string | null
   keepTempWav: boolean
   llmModel: string
@@ -93,17 +95,50 @@ export interface WhisperModelStatus {
   source: 'managed' | 'custom' | 'missing'
 }
 
+export interface WhisperModelInfo {
+  id: string
+  label: string
+  family: string
+  quant: string
+  langs: 'multi' | 'en'
+  bytes: number
+  vramGb: number
+  ramGb: number
+  installed: boolean
+  fit: 'gpu' | 'cpu' | 'ram'
+  recommended: boolean
+  active: boolean
+}
+
+export interface WhisperHardwareInfo {
+  vramMb: number | null
+  gpuName: string | null
+  vramSource: 'nvidia-smi' | 'registry' | 'none'
+  ramMb: number
+  cores: number
+  cudaBinary: boolean
+}
+
 export interface WhisperStatus {
   cpuBinary: boolean
   cudaBinary: boolean
   activeDevice: 'cpu' | 'cuda'
   model: WhisperModelStatus
+  /** Catálogo con el veredicto para este equipo (multilingüe primero, .en al final). */
+  models: WhisperModelInfo[]
+  hardware: WhisperHardwareInfo
+  recommendedId: string
+  activeModelId: string | null
+  customPath: string | null
+  installedBytes: number
+  diskFreeBytes: number | null
 }
 
 export type DownloadKind = 'model' | 'cuda'
 export type DownloadStatus =
   | 'idle'
   | 'downloading'
+  | 'verifying'
   | 'extracting'
   | 'done'
   | 'error'
@@ -111,6 +146,8 @@ export type DownloadStatus =
 
 export interface DownloadProgress {
   kind: DownloadKind
+  /** Modelo del catálogo al que corresponde la descarga. */
+  modelId?: string
   status: DownloadStatus
   receivedBytes: number
   totalBytes: number
@@ -415,7 +452,10 @@ export interface ChismositoApi {
   }
   whisper: {
     status(): Promise<WhisperStatus>
-    downloadModel(): Promise<WhisperStatus>
+    downloadModel(modelId: string): Promise<WhisperStatus>
+    removeModel(modelId: string): Promise<WhisperStatus>
+    chooseCustom(): Promise<WhisperStatus>
+    clearCustom(): Promise<WhisperStatus>
     downloadCuda(): Promise<WhisperStatus>
     cancelDownload(): Promise<void>
   }
