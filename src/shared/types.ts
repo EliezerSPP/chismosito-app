@@ -95,6 +95,8 @@ export interface WhisperModelStatus {
   source: 'managed' | 'custom' | 'missing'
 }
 
+export type WhisperProfile = 'fastest' | 'balanced' | 'quality'
+
 export interface WhisperModelInfo {
   id: string
   label: string
@@ -106,7 +108,8 @@ export interface WhisperModelInfo {
   ramGb: number
   installed: boolean
   fit: 'gpu' | 'cpu' | 'ram'
-  recommended: boolean
+  /** Perfiles para los que este modelo es la sugerencia. */
+  roles: WhisperProfile[]
   active: boolean
 }
 
@@ -127,7 +130,8 @@ export interface WhisperStatus {
   /** Catálogo con el veredicto para este equipo (multilingüe primero, .en al final). */
   models: WhisperModelInfo[]
   hardware: WhisperHardwareInfo
-  recommendedId: string
+  /** Sugerencia por perfil para este equipo. */
+  recommendations: Record<WhisperProfile, string>
   activeModelId: string | null
   customPath: string | null
   installedBytes: number

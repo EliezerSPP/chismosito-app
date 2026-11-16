@@ -10,7 +10,12 @@ import {
   Trash2,
   X
 } from 'lucide-react'
-import type { DownloadProgress, WhisperModelInfo, WhisperStatus } from '@shared/types'
+import type {
+  DownloadProgress,
+  WhisperModelInfo,
+  WhisperProfile,
+  WhisperStatus
+} from '@shared/types'
 import { formatBytes } from '../lib/format'
 import { cn } from '../lib/cn'
 
@@ -24,6 +29,12 @@ interface WhisperModelPickerProps {
   onChooseCustom: () => void
   onClearCustom: () => void
   onCancelDownload: () => void
+}
+
+const ROLE_LABEL: Record<WhisperProfile, string> = {
+  fastest: 'Más rápido',
+  balanced: 'Equilibrado',
+  quality: 'Mejor calidad'
 }
 
 function fitLabel(model: WhisperModelInfo, cudaBinary: boolean): string {
@@ -50,7 +61,9 @@ export function WhisperModelPicker({
 
   const active = status.models.find((model) => model.active)
   const custom = status.customPath
-  const recommended = status.models.find((model) => model.recommended)
+  const recommended = status.models.find((model) =>
+    model.roles.includes('balanced')
+  )
 
   useEffect(() => {
     if (!open) return
@@ -136,11 +149,21 @@ export function WhisperModelPicker({
                   EN
                 </span>
               ) : null}
-              {model.recommended ? (
-                <span className="chip border-accent/40 px-1.5 py-0 text-[9px] text-accent">
-                  Recomendado
+              {model.roles.map((role) => (
+                <span
+                  key={role}
+                  className={cn(
+                    'chip px-1.5 py-0 text-[9px]',
+                    role === 'quality'
+                      ? 'border-gold/40 text-gold'
+                      : role === 'balanced'
+                        ? 'border-accent/40 text-accent'
+                        : 'border-olive/40 text-olive'
+                  )}
+                >
+                  {ROLE_LABEL[role]}
                 </span>
-              ) : null}
+              ))}
               {model.active ? (
                 <span className="chip px-1.5 py-0 text-[9px] text-olive">Activo</span>
               ) : null}

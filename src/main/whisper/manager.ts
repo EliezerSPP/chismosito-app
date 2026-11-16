@@ -18,7 +18,7 @@ import {
 import {
   describeWhisperModels,
   QUALITY_ORDER,
-  recommendWhisperModel,
+  recommendWhisperProfiles,
   type WhisperHardware
 } from '@shared/whisper-policy'
 import type {
@@ -141,9 +141,14 @@ export class WhisperManager {
     return probeWhisperHardware(this.hasCuda())
   }
 
-  private async recommendation(): Promise<{ hardware: WhisperHardware; recommendedId: string }> {
+  private async recommendation(): Promise<{
+    hardware: WhisperHardware
+    recommendedId: string
+    recommendations: WhisperStatus['recommendations']
+  }> {
     const hardware = await this.hardware()
-    return { hardware, recommendedId: recommendWhisperModel(hardware).recommendedId }
+    const { profiles } = recommendWhisperProfiles(hardware)
+    return { hardware, recommendedId: profiles.balanced, recommendations: profiles }
   }
 
   /**
@@ -262,7 +267,7 @@ export class WhisperManager {
   }
 
   async status(): Promise<WhisperStatus> {
-    const { hardware, recommendedId } = await this.recommendation()
+    const { hardware, recommendedId, recommendations } = await this.recommendation()
     const active = this.resolveActive(recommendedId)
 
     const models: WhisperModelInfo[] = describeWhisperModels(hardware).map((entry) => ({
@@ -276,7 +281,7 @@ export class WhisperManager {
       ramGb: entry.spec.ramGb,
       installed: this.isInstalled(entry.spec.id),
       fit: entry.fit,
-      recommended: entry.recommended,
+      roles: entry.roles,
       active: entry.spec.id === active.id && active.source === 'managed'
     }))
 
@@ -312,7 +317,7 @@ export class WhisperManager {
       },
       models,
       hardware: hardwareInfo,
-      recommendedId,
+      recommendations,
       activeModelId: active.source === 'managed' ? active.id : null,
       customPath: this.settings.get().whisperModelPath?.trim() || null,
       installedBytes: this.installedBytes(),

@@ -20,8 +20,8 @@ export function SetupChecklist(): React.JSX.Element | null {
     download?.kind === 'model' &&
     (download.status === 'downloading' || download.status === 'verifying')
 
-  const recommended = whisper?.models.find((model) => model.recommended)
-  const recommendedId = recommended?.id ?? whisper?.recommendedId ?? ''
+  const recommended = whisper?.models.find((model) => model.roles.includes('balanced'))
+  const recommendedId = recommended?.id ?? whisper?.recommendations?.balanced ?? ''
 
   const downloadModel = async (): Promise<void> => {
     try {

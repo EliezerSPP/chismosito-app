@@ -1,4 +1,7 @@
+import type { WhisperProfile } from './types'
 import { WHISPER_MODELS, whisperModel, type WhisperModelSpec } from './whisper-models'
+
+export type { WhisperProfile }
 
 export interface WhisperHardware {
   /** VRAM en MiB, o null si no hay GPU NVIDIA detectable. */
@@ -18,25 +21,53 @@ const GPU_BUDGET = 0.85
 const RAM_BUDGET = 0.85
 
 /**
- * Preferencia por tramos. Se recorre de arriba abajo y se elige el primero que
- * entre; así el resultado nunca depende de un equipo concreto ni de un default
- * fijo escrito a mano.
+ * Escaleras por perfil. Se recorren de arriba abajo y gana la primera que
+ * entre en el equipo, así que el resultado sale del hardware y no de un
+ * default escrito a mano.
  */
-const CUDA_TIERS: Array<{ minVramMb: number; id: string }> = [
-  { minVramMb: 10_240, id: 'large-v3-f16' },
-  { minVramMb: 6_144, id: 'large-v3-q5_0' },
-  { minVramMb: 4_096, id: 'large-v3-turbo-q5_0' },
-  { minVramMb: 2_560, id: 'small-q8_0' },
-  { minVramMb: 1_536, id: 'base-q8_0' },
-  { minVramMb: 0, id: 'tiny-q5_1' }
-]
+const GPU_PROFILES: Record<WhisperProfile, string[]> = {
+  // Máxima calidad que quepa, sin mirar la velocidad.
+  quality: [
+    'large-v3-f16',
+    'large-v3-q5_0',
+    'large-v3-turbo-f16',
+    'large-v3-turbo-q8_0',
+    'medium-f16',
+    'medium-q8_0',
+    'medium-q5_0',
+    'small-f16',
+    'small-q8_0',
+    'small-q5_1',
+    'base-f16',
+    'base-q8_0',
+    'base-q5_1',
+    'tiny-f16',
+    'tiny-q8_0',
+    'tiny-q5_1'
+  ],
+  // Mejor relación calidad/velocidad: turbo con cuantización alta.
+  balanced: [
+    'large-v3-turbo-q8_0',
+    'large-v3-turbo-q5_0',
+    'medium-q8_0',
+    'medium-q5_0',
+    'small-q8_0',
+    'small-q5_1',
+    'base-q8_0',
+    'base-q5_1',
+    'tiny-q8_0',
+    'tiny-q5_1'
+  ],
+  // Lo más rápido que sigue sirviendo para reuniones.
+  fastest: ['large-v3-turbo-q5_0', 'medium-q5_0', 'small-q5_1', 'base-q5_1', 'tiny-q5_1']
+}
 
-const CPU_TIERS: Array<{ minRamMb: number; id: string }> = [
-  { minRamMb: 15_360, id: 'small-q8_0' },
-  { minRamMb: 7_168, id: 'small-q5_1' },
-  { minRamMb: 3_584, id: 'base-q5_1' },
-  { minRamMb: 0, id: 'tiny-q5_1' }
-]
+const CPU_PROFILES: Record<WhisperProfile, string[]> = {
+  // En CPU no se pasa de small: medium tarda ~2x realtime y no compensa.
+  quality: ['small-f16', 'small-q8_0', 'small-q5_1', 'base-f16', 'base-q8_0', 'base-q5_1', 'tiny-q5_1'],
+  balanced: ['small-q5_1', 'base-q8_0', 'base-q5_1', 'tiny-q8_0', 'tiny-q5_1'],
+  fastest: ['tiny-q5_1', 'tiny-q8_0', 'base-q5_1', 'base-q8_0']
+}
 
 /** Orden de preferencia por calidad (también se usa para el modo automático). */
 export const QUALITY_ORDER = [
@@ -79,17 +110,14 @@ function firstFit(
   return null
 }
 
-function tierId(hardware: WhisperHardware): string {
-  if (hardware.cudaBinary && hardware.vramMb) {
-    const tier = CUDA_TIERS.find((entry) => hardware.vramMb! >= entry.minVramMb)
-    if (tier) return tier.id
-  }
-  const tier = CPU_TIERS.find((entry) => hardware.ramMb >= entry.minRamMb)
-  return tier ? tier.id : 'tiny-q5_1'
-}
-
 export interface WhisperRecommendation {
   recommendedId: string
+  reason: 'gpu' | 'cpu'
+}
+
+export interface WhisperRecommendationSet {
+  /** Relleno con el modelo que corresponde a cada perfil. */
+  profiles: Record<WhisperProfile, string>
   reason: 'gpu' | 'cpu'
 }
 
@@ -98,30 +126,71 @@ export interface WhisperRecommendation {
  * suficiente; si no, cae a CPU y elige la talla según RAM. Siempre devuelve un
  * id del catálogo, aunque no quepa: la UI lo marca como "solo CPU".
  */
+/**
+ * Tres perfiles para el mismo equipo: lo más rápido, el equilibrio y la
+ * máxima calidad que entra. Nunca devuelve un modelo que no quepa en RAM, y en
+ * GPU exige que entre en la VRAM (si no, el perfil se calcula en modo CPU).
+ */
+export function recommendWhisperProfiles(hardware: WhisperHardware): WhisperRecommendationSet {
+  const gpu = Boolean(hardware.cudaBinary && hardware.vramMb && hardware.vramMb > 0)
+  const grofiles = gpu ? GPU_PROFILES : CPU_PROFILES
+  const accept = (fit: WhisperModelFit): boolean => (gpu ? fit === 'gpu' : fit !== 'ram')
+
+  const pick = (ladder: string[]): string | null => firstFit(ladder, hardware, accept)
+
+  const quality = pick(grofiles.quality)
+  const balanced = pick(grofiles.balanced)
+  const fastest = pick(grofiles.fastest)
+
+  const fallback = quality ?? balanced ?? fastest ?? 'tiny-q5_1'
+  const profiles: Record<WhisperProfile, string> = {
+    fastest: fastest ?? fallback,
+    balanced: balanced ?? fallback,
+    quality: quality ?? fallback
+  }
+
+  if (gpu && quality) return { profiles, reason: 'gpu' }
+
+  // Sin GPU (o sin nada que entre en VRAM): recalcular con las escaleras de CPU.
+  const cpuPick = (ladder: string[]): string | null => firstFit(ladder, hardware, (fit) => fit !== 'ram')
+  const cpuQuality = cpuPick(CPU_PROFILES.quality)
+  const cpuBalanced = cpuPick(CPU_PROFILES.balanced)
+  const cpuFastest = cpuPick(CPU_PROFILES.fastest)
+  const cpuFallback = cpuQuality ?? cpuBalanced ?? cpuFastest ?? 'tiny-q5_1'
+
+  return {
+    profiles: {
+      fastest: cpuFastest ?? cpuFallback,
+      balanced: cpuBalanced ?? cpuFallback,
+      quality: cpuQuality ?? cpuFallback
+    },
+    reason: 'cpu'
+  }
+}
+
+/** Compatibilidad: el perfil equilibrado es el "recomendado" de antes. */
 export function recommendWhisperModel(hardware: WhisperHardware): WhisperRecommendation {
-  const preferred = tierId(hardware)
-  const order = [preferred, ...QUALITY_ORDER.filter((id) => id !== preferred)]
-  const gpuAware = hardware.cudaBinary && hardware.vramMb
-
-  const gpuChoice = gpuAware ? firstFit(order, hardware, (fit) => fit === 'gpu') : null
-  if (gpuChoice) return { recommendedId: gpuChoice, reason: 'gpu' }
-
-  const cpuChoice = firstFit(order, hardware, (fit) => fit !== 'ram')
-  return { recommendedId: cpuChoice ?? 'tiny-q5_1', reason: 'cpu' }
+  const { profiles, reason } = recommendWhisperProfiles(hardware)
+  return { recommendedId: profiles.balanced, reason }
 }
 
 export interface WhisperCatalogueEntry {
   spec: WhisperModelSpec
   fit: WhisperModelFit
-  recommended: boolean
+  roles: WhisperProfile[]
 }
 
 /** Catálogo con el veredicto por equipo, en el orden de presentación. */
 export function describeWhisperModels(hardware: WhisperHardware): WhisperCatalogueEntry[] {
-  const { recommendedId } = recommendWhisperModel(hardware)
+  const { profiles } = recommendWhisperProfiles(hardware)
+  const byId = new Map<string, WhisperProfile[]>()
+  for (const role of ['fastest', 'balanced', 'quality'] as WhisperProfile[]) {
+    const id = profiles[role]
+    byId.set(id, [...(byId.get(id) ?? []), role])
+  }
   return WHISPER_MODELS.map((spec) => ({
     spec,
     fit: modelFit(spec, hardware),
-    recommended: spec.id === recommendedId
+    roles: byId.get(spec.id) ?? []
   }))
 }

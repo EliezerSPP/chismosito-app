@@ -3,6 +3,7 @@ import {
   describeWhisperModels,
   modelFit,
   recommendWhisperModel,
+  recommendWhisperProfiles,
   type WhisperHardware
 } from '../src/shared/whisper-policy'
 import { whisperModel } from '../src/shared/whisper-models'
@@ -21,86 +22,128 @@ function hw(overrides: Partial<WhisperHardware> = {}): WhisperHardware {
   }
 }
 
-describe('recommendWhisperModel', () => {
-  it('sin GPU elige por RAM y nunca pide CUDA', () => {
-    expect(recommendWhisperModel(hw({ ramMb: 32 * gb }))).toEqual({
-      recommendedId: 'small-q8_0',
-      reason: 'cpu'
+function cuda(vramMb: number, ramMb = 16 * gb): WhisperHardware {
+  return hw({ vramMb, ramMb, cudaBinary: true, gpuName: 'NVIDIA Test', vramSource: 'nvidia-smi' })
+}
+
+describe('recommendWhisperProfiles', () => {
+  it('con 4 GB ofrece rápido, equilibrado y máxima calidad', () => {
+    const { profiles, reason } = recommendWhisperProfiles(cuda(4 * gb))
+    expect(reason).toBe('gpu')
+    expect(profiles).toEqual({
+      fastest: 'large-v3-turbo-q5_0',
+      balanced: 'large-v3-turbo-q8_0',
+      quality: 'large-v3-q5_0'
     })
-    expect(recommendWhisperModel(hw({ ramMb: 8 * gb })).recommendedId).toBe('small-q5_1')
-    expect(recommendWhisperModel(hw({ ramMb: 4 * gb })).recommendedId).toBe('base-q5_1')
-    expect(recommendWhisperModel(hw({ ramMb: 3 * gb })).recommendedId).toBe('tiny-q5_1')
   })
 
-  it('con CUDA escala por VRAM', () => {
-    const cuda = (vramMb: number, ramMb = 16 * gb): WhisperHardware =>
-      hw({ vramMb, ramMb, cudaBinary: true, gpuName: 'NVIDIA Test', vramSource: 'nvidia-smi' })
+  it('con 12 GB la máxima calidad es f16', () => {
+    const { profiles } = recommendWhisperProfiles(cuda(12 * gb))
+    expect(profiles.quality).toBe('large-v3-f16')
+    expect(profiles.balanced).toBe('large-v3-turbo-q8_0')
+    expect(profiles.fastest).toBe('large-v3-turbo-q5_0')
+  })
 
-    expect(recommendWhisperModel(cuda(12 * gb))).toEqual({
-      recommendedId: 'large-v3-f16',
-      reason: 'gpu'
+  it('con 6 GB la calidad ya es f16 (cabe con margen) y el equilibrio es turbo q8_0', () => {
+    const { profiles } = recommendWhisperProfiles(cuda(6 * gb))
+    expect(profiles.quality).toBe('large-v3-f16')
+    expect(profiles.balanced).toBe('large-v3-turbo-q8_0')
+  })
+
+  it('con poca VRAM baja de familia sin salirse del presupuesto', () => {
+    for (const vram of [3 * gb, 2 * gb]) {
+      const { profiles, reason } = recommendWhisperProfiles(cuda(vram))
+      expect(reason).toBe('gpu')
+      for (const id of Object.values(profiles)) {
+        expect(whisperModel(id)!.vramGb * 1024).toBeLessThanOrEqual(vram * 0.85)
+      }
+    }
+    // 1 GB aprieta tanto que los tres perfiles colapsan en el mismo modelo.
+    const small = recommendWhisperProfiles(cuda(1 * gb))
+    expect(small.reason).toBe('gpu')
+    expect(new Set(Object.values(small.profiles)).size).toBe(1)
+    expect(whisperModel(small.profiles.quality)!.family).toBe('small')
+
+    const none = recommendWhisperProfiles(cuda(400))
+    expect(none.reason).toBe('cpu')
+    expect(whisperModel(none.profiles.balanced)!.family).toBe('small')
+  })
+
+  it('sin GPU calcula perfiles de CPU y nunca pasa de small', () => {
+    const { profiles, reason } = recommendWhisperProfiles(hw({ ramMb: 16 * gb }))
+    expect(reason).toBe('cpu')
+    expect(profiles).toEqual({
+      fastest: 'tiny-q5_1',
+      balanced: 'small-q5_1',
+      quality: 'small-f16'
     })
-    expect(recommendWhisperModel(cuda(8 * gb)).recommendedId).toBe('large-v3-q5_0')
-    expect(recommendWhisperModel(cuda(4 * gb)).recommendedId).toBe('large-v3-turbo-q5_0')
-    expect(recommendWhisperModel(cuda(3 * gb)).recommendedId).toBe('small-q8_0')
-    expect(recommendWhisperModel(cuda(2 * gb)).recommendedId).toBe('base-q8_0')
-    expect(recommendWhisperModel(cuda(1 * gb)).recommendedId).toBe('tiny-q5_1')
+    for (const id of Object.values(profiles)) {
+      expect(['small', 'base', 'tiny']).toContain(whisperModel(id)!.family)
+    }
   })
 
-  it('cae a CPU cuando la VRAM no alcanza ni para el modelo mínimo', () => {
-    const result = recommendWhisperModel(
-      hw({ vramMb: 512, cudaBinary: true, gpuName: 'NVIDIA pequeña', vramSource: 'nvidia-smi' })
-    )
-    expect(result.reason).toBe('cpu')
-    expect(result.recommendedId).not.toContain('large')
-  })
-
-  it('nunca recomienda un modelo que no quepa en RAM', () => {
-    const result = recommendWhisperModel(
-      hw({ vramMb: 24 * gb, cudaBinary: true, gpuName: 'NVIDIA grande', ramMb: 6 * gb })
-    )
-    // large-v3-f16 pide ~3.1 GB de RAM; con 6 GB entra, pero con 3 GB no.
-    expect(modelFit(whisperModel('large-v3-f16')!, result ? hw({ ramMb: 6 * gb }) : hw())).not.toBe(
-      'ram'
-    )
-    const tight = recommendWhisperModel(
-      hw({ vramMb: 24 * gb, cudaBinary: true, gpuName: 'NVIDIA grande', ramMb: 3 * gb })
-    )
-    expect(whisperModel(tight.recommendedId)!.ramGb * 1024).toBeLessThanOrEqual(3 * gb * 0.85)
+  it('con RAM corta elige lo que entra en memoria', () => {
+    const { profiles } = recommendWhisperProfiles(hw({ ramMb: 3 * gb }))
+    for (const id of Object.values(profiles)) {
+      expect(whisperModel(id)!.ramGb * 1024).toBeLessThanOrEqual(3 * gb * 0.85)
+    }
   })
 
   it('ignora la VRAM si el pack CUDA no está instalado', () => {
-    const result = recommendWhisperModel(
+    const { profiles, reason } = recommendWhisperProfiles(
       hw({ vramMb: 12 * gb, cudaBinary: false, gpuName: 'NVIDIA sin pack' })
     )
-    expect(result.reason).toBe('cpu')
-    expect(whisperModel(result.recommendedId)!.family).toBe('small')
+    expect(reason).toBe('cpu')
+    expect(whisperModel(profiles.quality)!.family).toBe('small')
+  })
+
+  it('el alias recommendWhisperModel devuelve el perfil equilibrado', () => {
+    const hardware = cuda(4 * gb)
+    expect(recommendWhisperModel(hardware)).toEqual({
+      recommendedId: recommendWhisperProfiles(hardware).profiles.balanced,
+      reason: 'gpu'
+    })
   })
 })
 
 describe('modelFit', () => {
   it('marca GPU, CPU y RAM según el equipo', () => {
     const medium = whisperModel('medium-q5_0')!
-    expect(modelFit(medium, hw({ vramMb: 4 * gb, cudaBinary: true }))).toBe('gpu')
-    expect(modelFit(medium, hw({ vramMb: 1 * gb, cudaBinary: true }))).toBe('cpu')
-    expect(modelFit(medium, hw({ cudaBinary: false }))).toBe('cpu')
+    expect(modelFit(medium, cuda(4 * gb))).toBe('gpu')
+    expect(modelFit(medium, cuda(1 * gb))).toBe('cpu')
+    expect(modelFit(medium, hw())).toBe('cpu')
     expect(modelFit(whisperModel('large-v3-f16')!, hw({ ramMb: 2 * gb }))).toBe('ram')
   })
 
   it('respeta el margen del 15 % de VRAM', () => {
     const model = whisperModel('large-v3-q5_0')!
     const justBarely = Math.ceil((model.vramGb * 1024) / 0.85)
-    expect(modelFit(model, hw({ vramMb: justBarely - 64, cudaBinary: true }))).toBe('cpu')
-    expect(modelFit(model, hw({ vramMb: justBarely + 64, cudaBinary: true }))).toBe('gpu')
+    expect(modelFit(model, cuda(justBarely - 64))).toBe('cpu')
+    expect(modelFit(model, cuda(justBarely + 64))).toBe('gpu')
   })
 })
 
 describe('describeWhisperModels', () => {
-  it('marca exactamente un recomendado y respeta el orden del catálogo', () => {
-    const entries = describeWhisperModels(hw({ vramMb: 4 * gb, cudaBinary: true }))
-    expect(entries.filter((entry) => entry.recommended)).toHaveLength(1)
-    expect(entries.find((entry) => entry.recommended)?.spec.id).toBe('large-v3-turbo-q5_0')
+  it('asigna perfiles y respeta el orden del catálogo', () => {
+    const entries = describeWhisperModels(cuda(4 * gb))
     expect(entries[0].spec.langs).toBe('multi')
     expect(entries[entries.length - 1].spec.langs).toBe('en')
+
+    const tagged = entries.filter((entry) => entry.roles.length > 0)
+    expect(tagged.map((entry) => entry.spec.id)).toEqual([
+      'large-v3-turbo-q5_0',
+      'large-v3-turbo-q8_0',
+      'large-v3-q5_0'
+    ])
+    expect(tagged.find((entry) => entry.roles.includes('quality'))?.spec.id).toBe('large-v3-q5_0')
+    expect(tagged.find((entry) => entry.roles.includes('fastest'))?.spec.id).toBe(
+      'large-v3-turbo-q5_0'
+    )
+  })
+
+  it('un modelo puede acumular dos perfiles cuando coinciden', () => {
+    const entries = describeWhisperModels(hw({ ramMb: 3 * gb }))
+    const fastest = entries.find((entry) => entry.roles.includes('fastest'))
+    expect(fastest?.roles).toContain('fastest')
   })
 })

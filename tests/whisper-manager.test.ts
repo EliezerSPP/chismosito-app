@@ -89,9 +89,15 @@ describe('WhisperManager.status', () => {
 
     expect(status.model.present).toBe(false)
     expect(status.model.source).toBe('missing')
-    expect(status.recommendedId).toBe('large-v3-turbo-q5_0')
     expect(status.hardware.vramMb).toBe(4096)
-    expect(status.models.find((model) => model.recommended)?.id).toBe('large-v3-turbo-q5_0')
+    expect(status.recommendations).toEqual({
+      fastest: 'large-v3-turbo-q5_0',
+      balanced: 'large-v3-turbo-q8_0',
+      quality: 'large-v3-q5_0'
+    })
+    expect(status.models.find((model) => model.roles.includes('quality'))?.id).toBe(
+      'large-v3-q5_0'
+    )
     expect(status.models.every((model) => !model.installed)).toBe(true)
   })
 

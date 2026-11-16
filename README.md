@@ -85,7 +85,7 @@ El modelo se puede sobrescribir desde Ajustes sin editar el `.env`.
 
 El catálogo incluye todos los `ggml-*.bin` de whisper.cpp (tiny → large-v3, con f16/q8_0/q5_0/q5_1). En **Ajustes → Transcripción** la app:
 
-- Detecta tu equipo (`nvidia-smi` para VRAM, RAM total y núcleos) y marca el modelo **Recomendado** (`large-v3-f16` en 10 GB+, `large-v3-q5_0` en 6 GB, `large-v3-turbo-q5_0` en 4 GB, `small`/`base`/`tiny` por CPU según RAM).
+- Detecta tu equipo (`nvidia-smi` para VRAM, RAM total y núcleos) y marca tres perfiles: **Más rápido**, **Equilibrado** y **Mejor calidad** (en 4 GB: `turbo-q5_0`, `turbo-q8_0` y `large-v3-q5_0`; con 12 GB la máxima calidad pasa a `large-v3-f16`; en CPU nunca se recomienda más de `small`).
 - Muestra por modelo el peso, la VRAM y la RAM estimadas, y si cabe en tu GPU o iría por CPU.
 - Descarga con reanudación (`.part`), verifica **sha256** contra el catálogo y registra lo instalado en `models/index.json`.
 - Agrupa al final los modelos **solo inglés** (`EN`): no transcriben español.
