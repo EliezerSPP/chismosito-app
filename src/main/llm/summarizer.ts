@@ -2,8 +2,14 @@ import OpenAI from 'openai'
 import { randomUUID } from 'node:crypto'
 import { app } from 'electron'
 import { z } from 'zod'
-import type { LlmTestResult } from '@shared/types'
+import type { LlmModelList, LlmTestResult } from '@shared/types'
 import { MISSING_KEY_MESSAGE } from '@shared/constants'
+import {
+  fallbackModelOptions,
+  modelLabel,
+  parseModelIds,
+  type LlmModelOption
+} from '@shared/models'
 import type { SettingsStore } from '../settings'
 import type { SecretStore } from '../secrets'
 import { getEnv } from '../env'
@@ -190,6 +196,46 @@ export class LlmClient {
 
   configured(): boolean {
     return isLlmConfigured(this.settings, this.secrets)
+  }
+
+  /** Lista de modelos que acepta el endpoint configurado (OpenCode Go). */
+  async listModels(): Promise<LlmModelList> {
+    const config = clientConfig(this.settings, this.secrets)
+    const baseUrl = config.baseURL
+    if (!config.apiKey) {
+      return {
+        ok: false,
+        source: 'fallback',
+        models: fallbackModelOptions(),
+        error: MISSING_KEY_MESSAGE,
+        baseUrl
+      }
+    }
+    try {
+      const response = await fetch(`${baseUrl}/models`, {
+        headers: {
+          ...openCodeHeaders(randomUUID()),
+          Authorization: `Bearer ${config.apiKey}`
+        },
+        signal: AbortSignal.timeout(15_000)
+      })
+      if (!response.ok) {
+        throw new Error(`La API respondió ${response.status} al pedir los modelos`)
+      }
+      const ids = parseModelIds(await response.json())
+      if (ids.length === 0) throw new Error('La API no devolvió modelos')
+      const models: LlmModelOption[] = ids.map((id) => ({ id, label: modelLabel(id) }))
+      return { ok: true, source: 'api', models, error: null, baseUrl }
+    } catch (error) {
+      log.warn('No se pudo obtener la lista de modelos; se usa la lista local', error)
+      return {
+        ok: false,
+        source: 'fallback',
+        models: fallbackModelOptions(),
+        error: friendlyLlmError(error),
+        baseUrl
+      }
+    }
   }
 
   async test(): Promise<LlmTestResult> {
