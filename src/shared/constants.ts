@@ -79,6 +79,6 @@ export const MISSING_KEY_MESSAGE =
   'Falta la API key de OpenCode. Agrégala en Ajustes → Resumen con LLM.'
 
 export const DEFAULT_HOTKEY = 'CommandOrControl+Shift+R'
-export const DEFAULT_LLM_BASE_URL = 'https://opencode.ai/inference/openai/v1'
+export const DEFAULT_LLM_BASE_URL = 'https://opencode.ai/inference/go/openai/v1'
 export const DEFAULT_LLM_MODEL = 'deepseek-v4.1-flash'
 export const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file'

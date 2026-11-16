@@ -1,5 +1,6 @@
 import type { LlmTestResult } from '@shared/types'
 import { MISSING_KEY_MESSAGE } from '@shared/constants'
+import { openCodeUserAgent } from './summarizer'
 import type { SettingsStore } from '../settings'
 import type { SecretStore } from '../secrets'
 import { getEnv } from '../env'
@@ -49,6 +50,7 @@ export class JevClient {
       response = await fetch(config.baseUrl, {
         method: 'POST',
         headers: {
+          'User-Agent': openCodeUserAgent(),
           Authorization: `Bearer ${config.apiKey}`,
           'Content-Type': 'application/json'
         },

@@ -105,8 +105,8 @@ const ENV_TEMPLATE = `# Chismosito — configuración local
 # La API key de OpenCode ya NO se guarda aquí: configúrala en
 # Ajustes → Resumen con LLM (se guarda cifrada en secrets.json).
 
-# LLM (OpenCode Zen es OpenAI-compatible)
-LLM_BASE_URL=https://opencode.ai/inference
+# LLM (OpenCode Go es OpenAI-compatible; /go/ es la ruta del plan Go)
+LLM_BASE_URL=https://opencode.ai/inference/go/openai/v1
 LLM_MODEL=deepseek-v4.1-flash
 
 # Jev (sugerencia de carpeta al terminar)

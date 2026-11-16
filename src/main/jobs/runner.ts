@@ -385,7 +385,8 @@ export class JobRunner {
               language: job.language,
               userName: settings.userName
             },
-            signal
+            signal,
+            job.id
           )
         } catch (error) {
           summaryError = (error as Error).message

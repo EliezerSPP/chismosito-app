@@ -253,6 +253,7 @@ export class ChatAssistant {
       const result = await this.deps.llm.chatStream(messages, {
         signal: controller.signal,
         maxTokens: 1800,
+        sessionId: thread.id,
         onDelta: (text) => {
           streamed += text
           this.emit({ type: 'delta', requestId, threadId, text })
@@ -472,6 +473,7 @@ export class ChatAssistant {
 
     const plan = await planLibraryQuery(this.deps.llm, {
       question,
+      sessionId: thread.id,
       today: dayjs().format('YYYY-MM-DD'),
       userName,
       filters,

@@ -5,7 +5,8 @@ import { normalizeSearch } from './retrieval'
 export interface JsonChatClient {
   chatJson(
     messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
-    maxTokens?: number
+    maxTokens?: number,
+    sessionId?: string
   ): Promise<unknown>
 }
 
@@ -25,6 +26,8 @@ export interface LibraryPlan {
 
 export interface PlanInput {
   question: string
+  /** Id de la conversación, para la sesión de OpenCode Go. */
+  sessionId?: string
   today: string
   userName: string
   filters: ChatFilter | null
@@ -250,7 +253,7 @@ export async function planLibraryQuery(
   ]
 
   try {
-    const raw = await client.chatJson(messages, 700)
+    const raw = await client.chatJson(messages, 700, input.sessionId)
     const plan = sanitizePlan(raw, input)
     const fallback = fallbackPlan(input)
     if (!plan.actions && fallback.actions) plan.actions = fallback.actions
