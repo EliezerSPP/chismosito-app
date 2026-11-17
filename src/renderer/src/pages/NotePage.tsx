@@ -34,6 +34,8 @@ import { decodeAudioToPcm } from '../lib/audio-decode'
 import { errorMessage } from '../lib/errors'
 import { cn } from '../lib/cn'
 
+const EMPTY_LIVE: Array<{ speaker: 'Yo' | 'Otros'; fromMs: number; toMs: number; text: string }> = []
+
 export function NotePage(): React.JSX.Element {
   const [searchParams, setSearchParams] = useSearchParams()
   const path = searchParams.get('path') ?? ''
@@ -45,6 +47,7 @@ export function NotePage(): React.JSX.Element {
   const drive = useAppStore((state) => state.drive)
   const env = useAppStore((state) => state.env)
   const pushToast = useAppStore((state) => state.pushToast)
+  const liveSegments = useAppStore((state) => state.liveTranscript[path] ?? EMPTY_LIVE)
   const refreshNotes = useAppStore((state) => state.refreshNotes)
 
   const [note, setNote] = useState<NoteDetail | null>(null)
@@ -60,6 +63,7 @@ export function NotePage(): React.JSX.Element {
   const [busySuggestion, setBusySuggestion] = useState(false)
   const [chatThreadId, setChatThreadId] = useState<string | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
+  const liveRef = useRef<HTMLDivElement | null>(null)
 
   const load = useCallback(async (): Promise<void> => {
     if (!path) {
@@ -140,6 +144,10 @@ export function NotePage(): React.JSX.Element {
       </div>
     )
   }
+
+  useEffect(() => {
+    if (liveRef.current) liveRef.current.scrollTop = liveRef.current.scrollHeight
+  }, [liveSegments.length])
 
   const transcriptIndex = note.content.indexOf('## Transcripción')
   const beforeTranscript = transcriptIndex >= 0 ? note.content.slice(0, transcriptIndex) : note.content
@@ -613,7 +621,37 @@ export function NotePage(): React.JSX.Element {
               </div>
             </div>
 
-            {note.status === 'processing' && note.transcript.length === 0 ? (
+            {liveSegments.length > 0 ? (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-[11px] text-muted">
+                  <Sparkles className="size-3.5 animate-pulse text-accent" />
+                  Transcribiendo en vivo · {liveSegments.length} fragmentos
+                </div>
+                <div
+                  ref={liveRef}
+                  className="max-h-[420px] space-y-2 overflow-y-auto rounded-2xl border border-line bg-surface2/40 p-3"
+                >
+                  {liveSegments.map((segment, index) => (
+                    <div key={index} className="flex gap-3 text-[13px] leading-relaxed">
+                      <span className="w-11 shrink-0 pt-0.5 text-right text-[10px] tabular-nums text-muted">
+                        {formatDuration(Math.floor(segment.fromMs / 1000))}
+                      </span>
+                      <span
+                        className={cn(
+                          'shrink-0 rounded-full px-2 py-0.5 text-[9px] font-medium uppercase tracking-wide',
+                          segment.speaker === 'Yo'
+                            ? 'bg-accent-soft text-accent'
+                            : 'bg-surface text-muted'
+                        )}
+                      >
+                        {segment.speaker}
+                      </span>
+                      <span className="min-w-0 flex-1 text-ink">{segment.text}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : note.status === 'processing' && note.transcript.length === 0 ? (
               <div className="flex items-center gap-3 rounded-2xl border border-line bg-surface px-4 py-5 text-sm text-muted">
                 <Sparkles className="size-4 animate-pulse text-accent" />
                 La transcripción aparecerá aquí cuando termine el procesamiento.

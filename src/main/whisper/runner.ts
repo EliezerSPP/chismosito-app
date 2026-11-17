@@ -22,6 +22,8 @@ export interface WhisperRunOptions {
   noContext?: boolean
   /** Modelo VAD (silero): corta el audio en tramos con voz. */
   vadModelPath?: string | null
+  /** Se llama con cada segmento en cuanto whisper lo imprime (streaming). */
+  onSegment?: (segment: RawSegment) => void
   signal?: AbortSignal
   onProgress?: (percent: number) => void
 }
@@ -52,6 +54,26 @@ function segmentMs(segment: WhisperJsonSegment): { from: number; to: number } {
   const to =
     segment.offsets?.to_ms ?? segment.offsets?.to ?? parseTimestamp(segment.timestamps?.to)
   return { from: Number(from) || 0, to: Number(to) || 0 }
+}
+
+const SEGMENT_LINE =
+  /^\[(\d{1,2}):(\d{2}):(\d{2})\.(\d{3}) --> (\d{1,2}):(\d{2}):(\d{2})\.(\d{3})\]\s*(.*)$/
+
+function timestampMs(h: string, m: string, s: string, ms: string): number {
+  return Number(h) * 3_600_000 + Number(m) * 60_000 + Number(s) * 1_000 + Number(ms)
+}
+
+/** Parsea una línea de segmento que whisper imprime en stdout. */
+export function parseSegmentLine(line: string): RawSegment | null {
+  const match = line.match(SEGMENT_LINE)
+  if (!match) return null
+  const text = match[9].trim()
+  if (!text) return null
+  return {
+    fromMs: timestampMs(match[1], match[2], match[3], match[4]),
+    toMs: timestampMs(match[5], match[6], match[7], match[8]),
+    text
+  }
 }
 
 export function buildWhisperArgs(options: WhisperRunOptions, outputBase: string): string[] {
@@ -100,6 +122,7 @@ export async function runWhisper(options: WhisperRunOptions): Promise<RawSegment
       })
       let stderr = ''
       let stdout = ''
+      let stdoutPending = ''
       let lastPercent = -1
       let killedForAbort = false
 
@@ -114,8 +137,24 @@ export async function runWhisper(options: WhisperRunOptions): Promise<RawSegment
         }
       }
 
+      // whisper imprime cada segmento en stdout en cuanto lo decodifica:
+      //   [00:00:12.000 --> 00:00:18.400]   texto
+      const parseSegments = (): void => {
+        if (!options.onSegment) return
+        const lines2 = stdoutPending.split(/\r?\n/)
+        stdoutPending = lines2.pop() ?? ''
+        for (const line of lines2) {
+          const segment = parseSegmentLine(line)
+          if (segment) options.onSegment(segment)
+        }
+      }
+
+
       child.stdout?.on('data', (chunk) => {
-        stdout += String(chunk)
+        const text = String(chunk)
+        stdout += text
+        stdoutPending += text
+        parseSegments()
         handleOutput(stdout.slice(-400))
       })
       child.stderr?.on('data', (chunk) => {

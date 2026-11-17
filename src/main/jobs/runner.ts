@@ -3,14 +3,14 @@ import { existsSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import { dirname, join, basename } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import type { Job, JobStage } from '@shared/types'
+import type { Job, JobStage, LiveSegment } from '@shared/types'
 import { MISSING_KEY_MESSAGE } from '@shared/constants'
 import type { SettingsStore } from '../settings'
 import type { NoteRepository } from '../notes/repository'
 import type { WhisperManager } from '../whisper/manager'
 import { runWhisper, type RawSegment } from '../whisper/runner'
-import { mergeSpeakers, renderTranscript } from '../whisper/merge'
-import { assignSpeakers, parseSpeakerTimeline } from '../whisper/relabel'
+import { cleanSegmentText, mergeSpeakers, renderTranscript } from '../whisper/merge'
+import { assignSpeakers, nearestSpeaker, parseSpeakerTimeline } from '../whisper/relabel'
 import type { LlmClient } from '../llm/summarizer'
 import type { JevClient, FolderSuggestion } from '../llm/jev'
 import { ensureDir, writeAtomic } from '../lib/fs'
@@ -39,6 +39,7 @@ interface JobRunnerDeps {
   jev: JevClient
   emitJobs: (jobs: Job[]) => void
   emitToast: (level: 'info' | 'success' | 'error', message: string) => void
+  emitLiveSegment?: (notePath: string, segment: LiveSegment) => void
   onNoteChanged: () => void
   backupNote?: (notePath: string) => Promise<void>
   driveEnabled?: () => boolean
@@ -304,6 +305,7 @@ export class JobRunner {
         const devices: Array<'cpu' | 'cuda'> = [this.deps.whisper.activeDevice()]
         let micSegments: RawSegment[] = []
         let systemSegments: RawSegment[] = []
+        const timeline = retranscribe ? parseSpeakerTimeline(existingTranscript) : []
 
         const transcribeFile = async (
           wav: string | null,
@@ -333,6 +335,22 @@ export class JobRunner {
               device,
               threads: settings.whisperThreads,
               signal,
+              onSegment: (segment) => {
+                const speaker: 'Yo' | 'Otros' =
+                  kind === 'mic'
+                    ? 'Yo'
+                    : kind === 'system'
+                      ? 'Otros'
+                      : (nearestSpeaker(timeline, Math.max(0, segment.fromMs)) ?? 'Otros')
+                const text = cleanSegmentText(segment.text)
+                if (!text) return
+                this.deps.emitLiveSegment?.(job.notePath, {
+                  speaker,
+                  fromMs: Math.max(0, segment.fromMs),
+                  toMs: Math.max(segment.fromMs, segment.toMs),
+                  text
+                })
+              },
               onProgress: (percent) => {
                 const base = kind === 'mic' ? 8 : 34
                 const span = 26
@@ -364,7 +382,6 @@ export class JobRunner {
           // timeline de la transcripción anterior.
           const segments = await transcribeFile(retranscribe, 'mixed')
           if (signal?.aborted) throw new Error('Procesamiento cancelado')
-          const timeline = parseSpeakerTimeline(existingTranscript)
           transcriptText = renderTranscript(assignSpeakers(segments, timeline)).markdown
         } else {
           micSegments = await transcribeFile(job.micWavPath, 'mic')

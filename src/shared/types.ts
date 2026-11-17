@@ -114,6 +114,13 @@ export interface WhisperModelStatus {
 
 export type WhisperProfile = 'fastest' | 'balanced' | 'quality'
 
+export interface LiveSegment {
+  speaker: 'Yo' | 'Otros'
+  fromMs: number
+  toMs: number
+  text: string
+}
+
 export interface WhisperModelInfo {
   id: string
   label: string
@@ -428,6 +435,7 @@ export type AppEvent =
   | { type: 'chat'; event: ChatStreamEvent }
   | { type: 'toast'; level: ToastLevel; message: string }
   | { type: 'env-changed' }
+  | { type: 'transcript-live'; notePath: string; segment: LiveSegment }
 
 export interface ChismositoApi {
   app: {

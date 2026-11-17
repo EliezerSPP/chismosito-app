@@ -32,6 +32,8 @@ export default function App(): React.JSX.Element {
   const refreshWhisper = useAppStore((state) => state.refreshWhisper)
   const refreshJobs = useAppStore((state) => state.refreshJobs)
   const refreshEnv = useAppStore((state) => state.refreshEnv)
+  const appendLiveSegment = useAppStore((state) => state.appendLiveSegment)
+  const clearLiveTranscript = useAppStore((state) => state.clearLiveTranscript)
   const notesTimer = useRef<number | null>(null)
 
   useEffect(() => {
@@ -45,6 +47,14 @@ export default function App(): React.JSX.Element {
       switch (event.type) {
         case 'jobs':
           setJobs(event.jobs)
+          for (const job of event.jobs) {
+            if (['done', 'failed', 'cancelled'].includes(job.stage)) {
+              clearLiveTranscript(job.notePath)
+            }
+          }
+          break
+        case 'transcript-live':
+          appendLiveSegment(event.notePath, event.segment)
           break
         case 'notes-changed':
           bumpNotes()
@@ -113,6 +123,8 @@ export default function App(): React.JSX.Element {
     pushToast,
     refreshNotes,
     refreshEnv,
+    appendLiveSegment,
+    clearLiveTranscript,
     refreshWhisper,
     setDrive,
     setDriveProgress,

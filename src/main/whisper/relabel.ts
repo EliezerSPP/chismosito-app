@@ -37,7 +37,7 @@ export function parseSpeakerTimeline(markdown: string | null | undefined): Speak
   return entries
 }
 
-function nearestSpeaker(entries: SpeakerTimelineEntry[], fromMs: number): Speaker | null {
+export function nearestSpeaker(entries: SpeakerTimelineEntry[], fromMs: number): Speaker | null {
   if (entries.length === 0) return null
   let previous: SpeakerTimelineEntry | null = null
   for (const entry of entries) {

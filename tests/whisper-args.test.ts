@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildWhisperArgs, type WhisperRunOptions } from '../src/main/whisper/runner'
+import { buildWhisperArgs, parseSegmentLine, type WhisperRunOptions } from '../src/main/whisper/runner'
 import { VAD_MODEL } from '../src/shared/whisper-vad'
 
 const base: WhisperRunOptions = {
@@ -58,6 +58,25 @@ describe('buildWhisperArgs', () => {
   it('nunca pasa menos de un hilo', () => {
     const list = args({ threads: 0 })
     expect(list[list.indexOf('-t') + 1]).toBe('1')
+  })
+})
+
+describe('parseSegmentLine', () => {
+  it('lee una línea de segmento de whisper', () => {
+    expect(
+      parseSegmentLine('[00:00:12.000 --> 00:00:18.400]   Hola a todos, empezamos.')
+    ).toEqual({ fromMs: 12_000, toMs: 18_400, text: 'Hola a todos, empezamos.' })
+  })
+
+  it('acepta horas y descarta líneas que no son segmentos', () => {
+    expect(parseSegmentLine('[01:02:03.500 --> 01:02:07.000] Retomamos.')).toEqual({
+      fromMs: 3_723_500,
+      toMs: 3_727_000,
+      text: 'Retomamos.'
+    })
+    expect(parseSegmentLine('progress = 42%')).toBeNull()
+    expect(parseSegmentLine('[00:00:00.000 --> 00:00:01.000]   ')).toBeNull()
+    expect(parseSegmentLine('texto suelto')).toBeNull()
   })
 })
 
