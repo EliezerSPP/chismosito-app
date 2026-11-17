@@ -57,10 +57,13 @@ class RecorderController {
   private listeners = new Set<(snapshot: RecorderSnapshot) => void>()
   private mixContext: AudioContext | null = null
   private tapContext: AudioContext | null = null
+  private tapSink: MediaStreamAudioDestinationNode | null = null
+  private tapConsumer: MediaRecorder | null = null
   private recorder: MediaRecorder | null = null
   private micStream: MediaStream | null = null
   private systemStream: MediaStream | null = null
   private tapStreams: MediaStream[] = []
+  private tapSources: MediaStreamAudioSourceNode[] = []
   private worklets: AudioWorkletNode[] = []
   private micAnalyser: AnalyserNode | null = null
   private systemAnalyser: AnalyserNode | null = null
@@ -70,6 +73,7 @@ class RecorderController {
   private tickTimer: number | null = null
   private chunkChain: Promise<void> = Promise.resolve()
   private sessionId: string | null = null
+  private tapWarned = false
 
   subscribe(listener: (snapshot: RecorderSnapshot) => void): () => void {
     this.listeners.add(listener)
@@ -106,6 +110,7 @@ class RecorderController {
       systemLevel: 0
     })
     this.peaks = { mic: 0, system: 0 }
+    this.tapWarned = false
     this.chunkChain = Promise.resolve()
 
     try {
@@ -175,8 +180,9 @@ class RecorderController {
         language: settings.language
       })
       this.sessionId = result.id
-      this.tapContext = new AudioContext({ sampleRate: PCM_SAMPLE_RATE })
+      this.tapContext = this.createTapContext()
       await this.tapContext.resume()
+      this.tapContext.onstatechange = this.handleTapStateChange
       await this.tapContext.audioWorklet.addModule(
         new URL('worklets/pcm-tap.js', document.baseURI).toString()
       )
@@ -250,11 +256,41 @@ class RecorderController {
     return navigator.mediaDevices.getUserMedia({ audio: base })
   }
 
+  private createTapContext(): AudioContext {
+    // `sinkId: none` evita que el contexto quede atado al dispositivo de salida.
+    // Si el runtime no lo soporta, seguimos sin conectar nada al destination.
+    const options = {
+      sampleRate: PCM_SAMPLE_RATE,
+      sinkId: { type: 'none' }
+    } as AudioContextOptions & { sinkId: { type: 'none' } }
+    try {
+      return new AudioContext(options)
+    } catch {
+      return new AudioContext({ sampleRate: PCM_SAMPLE_RATE })
+    }
+  }
+
+  private handleTapStateChange = (): void => {
+    const context = this.tapContext
+    if (!context || this.snapshot.phase !== 'recording' || context.state === 'running') return
+    void context.resume().catch(() => undefined)
+    if (!this.tapWarned) {
+      this.tapWarned = true
+      useAppStore
+        .getState()
+        .pushToast(
+          'info',
+          'La captura por pista se interrumpió; al detener se transcribirá el audio completo como respaldo.'
+        )
+    }
+  }
+
   private attachTap(stream: MediaStream, track: 'mic' | 'system'): void {
     if (!this.tapContext) return
     const clone = new MediaStream(stream.getAudioTracks().map((audioTrack) => audioTrack.clone()))
     this.tapStreams.push(clone)
     const source = this.tapContext.createMediaStreamSource(clone)
+    this.tapSources.push(source)
     const node = new AudioWorkletNode(this.tapContext, 'pcm-tap', {
       numberOfInputs: 1,
       numberOfOutputs: 1,
@@ -270,9 +306,27 @@ class RecorderController {
         window.chismosito.recording.sendPcmChunk(this.sessionId, track, pcm)
       }
     }
-    const silent = this.tapContext.createGain()
-    silent.gain.value = 0
-    source.connect(node).connect(silent).connect(this.tapContext.destination)
+    // El worklet se conecta a un MediaStreamDestination (sin hardware). Conectar
+    // un worklet a `context.destination` con ganancia 0 hace que Chromium lo pase
+    // a baja prioridad y produzca dropouts en grabaciones largas.
+    this.tapSink ??= this.tapContext.createMediaStreamDestination()
+    if (!this.tapConsumer) {
+      try {
+        this.tapConsumer = new MediaRecorder(this.tapSink.stream, {
+          mimeType: MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+            ? 'audio/webm;codecs=opus'
+            : 'audio/webm',
+          audioBitsPerSecond: 16_000
+        })
+        this.tapConsumer.ondataavailable = () => undefined
+        // El MediaRecorder actúa como consumidor real: obliga a Chromium a
+        // renderizar el grafo a tiempo real aunque la salida sea inaudible.
+        this.tapConsumer.start(5000)
+      } catch (error) {
+        console.warn('No se pudo iniciar el consumidor de la captura PCM', error)
+      }
+    }
+    source.connect(node).connect(this.tapSink)
     this.worklets.push(node)
   }
 
@@ -418,6 +472,24 @@ class RecorderController {
       }
     }
     this.worklets = []
+    for (const source of this.tapSources) {
+      try {
+        source.disconnect()
+      } catch {
+        // ignore
+      }
+    }
+    this.tapSources = []
+    this.tapSink = null
+    if (this.tapConsumer && this.tapConsumer.state !== 'inactive') {
+      try {
+        this.tapConsumer.stop()
+      } catch {
+        // ignore
+      }
+    }
+    this.tapConsumer = null
+    if (this.tapContext) this.tapContext.onstatechange = null
 
     if (this.recorder && this.recorder.state !== 'inactive') {
       try {
@@ -456,6 +528,7 @@ class RecorderController {
     this.systemAnalyser = null
     this.sessionId = null
     this.peaks = { mic: 0, system: 0 }
+    this.tapWarned = false
     this.chunkChain = Promise.resolve()
   }
 }

@@ -42,6 +42,7 @@ const api: ChismositoApi = {
       ipcRenderer.invoke(IPC.notesClearFolderSuggestion, path),
     reveal: (path) => ipcRenderer.invoke(IPC.notesReveal, path),
     resummarize: (path) => ipcRenderer.invoke(IPC.notesResummarize, path),
+    reprocess: (path) => ipcRenderer.invoke(IPC.notesReprocess, path),
     search: (query) => ipcRenderer.invoke(IPC.notesSearch, query)
   },
   folders: {

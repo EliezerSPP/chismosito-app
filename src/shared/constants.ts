@@ -30,6 +30,7 @@ export const IPC = {
   notesClearFolderSuggestion: 'notes:clear-folder-suggestion',
   notesReveal: 'notes:reveal',
   notesResummarize: 'notes:resummarize',
+  notesReprocess: 'notes:reprocess',
   notesSearch: 'notes:search',
 
   foldersCreate: 'folders:create',
@@ -74,6 +75,8 @@ export const MODEL_URL =
   'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium-q5_0.bin'
 export const CUDA_ZIP_NAME = 'whisper-bin-win-cuda-12.4.0-x64.zip'
 export const CUDA_URL = `https://github.com/ggml-org/whisper.cpp/releases/download/b5454/${CUDA_ZIP_NAME}`
+export const VAD_FILE_NAME = 'ggml-silero-v5.1.2.bin'
+export const VAD_EXPECTED_BYTES = 885_098
 
 export const MISSING_KEY_MESSAGE =
   'Falta la API key de OpenCode. Agrégala en Ajustes → Resumen con LLM.'

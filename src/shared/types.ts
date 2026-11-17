@@ -10,8 +10,10 @@ export type NoteStatus =
 
 export type JobStage =
   | 'queued'
+  | 'preparing_audio'
   | 'transcribing_mic'
   | 'transcribing_system'
+  | 'transcribing_mix'
   | 'merging'
   | 'summarizing'
   | 'finalizing'
@@ -225,6 +227,10 @@ export interface Job {
   progress: number
   message: string
   error: string | null
+  /** Motivo por el que la captura por pista no es fiable; si existe, se usa el audio completo. */
+  captureIssue?: string | null
+  /** Fuerza a volver a transcribir desde el audio de la nota, ignorando la transcripción previa. */
+  reprocessAudio?: boolean
   createdAt: string
   updatedAt: string
   transcriptChars: number
@@ -406,6 +412,7 @@ export interface ChismositoApi {
     clearFolderSuggestion(path: string): Promise<NoteDetail>
     reveal(path: string): Promise<void>
     resummarize(path: string): Promise<void>
+    reprocess(path: string): Promise<void>
     search(query: string): Promise<NoteMeta[]>
   }
   folders: {
