@@ -43,6 +43,7 @@ export const IPC = {
   whisperCancelDownload: 'whisper:cancel-download',
 
   llmTest: 'llm:test',
+  llmModels: 'llm:models',
   llmKeySet: 'llm:key-set',
   llmKeyClear: 'llm:key-clear',
   llmEnvKeyScrub: 'llm:env-key-scrub',

@@ -18,6 +18,7 @@ import type {
   DriveStatus,
   EnvStatus,
   LlmKeyStatus,
+  LlmModelList,
   LlmTestResult,
   NoteDetail,
   NoteMeta,
@@ -343,6 +344,7 @@ export function registerIpc(context: MainContext): void {
   ipcMain.handle(IPC.whisperCancelDownload, (): void => context.whisper.cancelDownload())
 
   ipcMain.handle(IPC.llmTest, (): Promise<LlmTestResult> => context.llm.test())
+  ipcMain.handle(IPC.llmModels, (): Promise<LlmModelList> => context.llm.listModels())
   ipcMain.handle(IPC.llmKeySet, (_event, key: string): LlmKeyStatus => {
     const status = context.secrets.setApiKey(String(key ?? ''))
     context.broadcast({ type: 'env-changed' })
