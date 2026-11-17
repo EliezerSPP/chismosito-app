@@ -465,6 +465,7 @@ export interface ChismositoApi {
     reveal(path: string): Promise<void>
     resummarize(path: string): Promise<void>
     duplicate(path: string): Promise<NoteDetail>
+    audioBytes(path: string): Promise<ArrayBuffer>
     retranscribeBegin(path: string, samples: number): Promise<{ id: string }>
     retranscribeChunk(id: string, chunk: ArrayBuffer): Promise<void>
     retranscribeFinish(id: string): Promise<Job>

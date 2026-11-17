@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { existsSync } from 'node:fs'
+import { readFile, stat } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import type {
@@ -302,6 +303,23 @@ export function registerIpc(context: MainContext): void {
   })
 
   ipcMain.handle(
+    IPC.notesAudioBytes,
+    async (_event, path: string): Promise<ArrayBuffer> => {
+      const note = await context.notes.get(String(path))
+      if (!note) throw new Error('La nota no existe')
+      if (!note.audio) throw new Error('La nota no tiene audio guardado')
+      const absolute = join(dirname(note.path), note.audio)
+      if (!existsSync(absolute)) throw new Error('No se encontró el archivo de audio')
+      const info = await stat(absolute)
+      if (info.size > 2 * 1024 * 1024 * 1024) {
+        throw new Error('El audio es demasiado grande para procesarlo en la app')
+      }
+      const bytes = await readFile(absolute)
+      return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
+    }
+  )
+
+  ipcMain.handle(
     IPC.notesRetranscribeBegin,
     async (_event, path: string, samples: number): Promise<{ id: string }> => {
       if (context.sessions.isRecording()) {
@@ -343,6 +361,8 @@ export function registerIpc(context: MainContext): void {
         hasSystem: false,
         meetingDate: note.date || new Date().toISOString()
       })
+      await context.notes.setStatus(note.path, 'processing')
+      context.broadcast({ type: 'notes-changed' })
       toast('info', `Regenerando transcripción con ${whisperStatus.model.name}…`)
       return job
     }

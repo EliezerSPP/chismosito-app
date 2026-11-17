@@ -43,6 +43,7 @@ const api: ChismositoApi = {
     reveal: (path) => ipcRenderer.invoke(IPC.notesReveal, path),
     resummarize: (path) => ipcRenderer.invoke(IPC.notesResummarize, path),
     duplicate: (path) => ipcRenderer.invoke(IPC.notesDuplicate, path),
+    audioBytes: (path) => ipcRenderer.invoke(IPC.notesAudioBytes, path),
     retranscribeBegin: (path, samples) =>
       ipcRenderer.invoke(IPC.notesRetranscribeBegin, path, samples),
     retranscribeChunk: (id, chunk) => ipcRenderer.invoke(IPC.notesRetranscribeChunk, id, chunk),

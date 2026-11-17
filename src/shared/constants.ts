@@ -35,6 +35,7 @@ export const IPC = {
   notesRetranscribeFinish: 'notes:retranscribe-finish',
   notesRetranscribeCancel: 'notes:retranscribe-cancel',
   notesDuplicate: 'notes:duplicate',
+  notesAudioBytes: 'notes:audio-bytes',
   notesSearch: 'notes:search',
 
   foldersCreate: 'folders:create',

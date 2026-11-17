@@ -260,7 +260,8 @@ export function NotePage(): React.JSX.Element {
     setBusyRetranscribe(true)
     try {
       pushToast('info', 'Preparando el audio…')
-      const pcm = await decodeAudioToPcm(audioSrc)
+      const bytes = await window.chismosito.notes.audioBytes(note!.path)
+      const pcm = await decodeAudioToPcm(bytes)
       const { id } = await window.chismosito.notes.retranscribeBegin(note!.path, pcm.length)
       try {
         const chunkSize = 1_000_000
