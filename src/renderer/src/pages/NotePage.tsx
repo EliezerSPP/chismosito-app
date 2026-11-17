@@ -29,7 +29,7 @@ import { ChatPanel } from '../components/ChatPanel'
 import { EditNoteModal } from '../components/EditNoteModal'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { ProgressBar } from '../components/ProgressBar'
-import { noteDateLabel, formatDuration } from '../lib/format'
+import { noteDateLabel, formatDuration, formatClock } from '../lib/format'
 import { decodeAudioToPcm } from '../lib/audio-decode'
 import { errorMessage } from '../lib/errors'
 import { cn } from '../lib/cn'
@@ -268,14 +268,17 @@ export function NotePage(): React.JSX.Element {
     setBusyRetranscribe(true)
     try {
       pushToast('info', 'Preparando el audio…')
-      const bytes = await window.chismosito.notes.audioBytes(note!.path)
-      const pcm = await decodeAudioToPcm(bytes)
-      const { id } = await window.chismosito.notes.retranscribeBegin(note!.path, pcm.length)
+      const { id, needs } = await window.chismosito.notes.retranscribeBegin(note!.path)
       try {
         const chunkSize = 1_000_000
-        for (let offset = 0; offset < pcm.length; offset += chunkSize) {
-          const chunk = pcm.slice(offset, offset + chunkSize)
-          await window.chismosito.notes.retranscribeChunk(id, chunk.buffer as ArrayBuffer)
+        for (const need of needs) {
+          const track = need === 'mixed' ? 'mix' : need
+          const bytes = await window.chismosito.notes.audioBytes(note!.path, track)
+          const pcm = await decodeAudioToPcm(bytes)
+          for (let offset = 0; offset < pcm.length; offset += chunkSize) {
+            const chunk = pcm.slice(offset, offset + chunkSize)
+            await window.chismosito.notes.retranscribeChunk(id, need, chunk.buffer as ArrayBuffer)
+          }
         }
         const job = await window.chismosito.notes.retranscribeFinish(id)
         pushToast('success', `Re-transcripción en cola (${job.baseName}).`)
@@ -633,8 +636,8 @@ export function NotePage(): React.JSX.Element {
                 >
                   {liveSegments.map((segment, index) => (
                     <div key={index} className="flex gap-3 text-[13px] leading-relaxed">
-                      <span className="w-11 shrink-0 pt-0.5 text-right text-[10px] tabular-nums text-muted">
-                        {formatDuration(Math.floor(segment.fromMs / 1000))}
+                      <span className="w-12 shrink-0 whitespace-nowrap pt-0.5 text-right text-[10px] tabular-nums text-muted">
+                        {formatClock(segment.fromMs / 1000)}
                       </span>
                       <span
                         className={cn(
@@ -705,7 +708,7 @@ export function NotePage(): React.JSX.Element {
       <ConfirmDialog
         open={confirmRetranscribe}
         title="Regenerar transcripción"
-        description="Se vuelve a transcribir el audio con el modelo activo y luego se regenera el resumen. La transcripción actual se reemplaza; el audio no se toca. Puede tardar varios minutos en reuniones largas."
+        description="Se vuelve a transcribir el audio con el modelo activo y luego se regenera el resumen. La transcripción actual se reemplaza; el audio no se toca. Si la nota guarda las pistas separadas, «Yo» y «Otros» se conservan exactos; si solo tiene el audio mezclado, se aproximan desde la transcripción anterior. Puede tardar varios minutos en reuniones largas."
         confirmLabel="Re-transcribir"
         onClose={() => setConfirmRetranscribe(false)}
         onConfirm={() => void retranscribe()}

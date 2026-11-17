@@ -20,6 +20,8 @@ const api: ChismositoApi = {
   recording: {
     start: (input) => ipcRenderer.invoke(IPC.recordingStart, input),
     sendWebmChunk: (id, chunk) => ipcRenderer.send(IPC.recordingWebmChunk, id, chunk),
+    sendTrackChunk: (id, track, chunk) =>
+      ipcRenderer.send(IPC.recordingTrackChunk, id, track, chunk),
     sendPcmChunk: (id, track, chunk) =>
       ipcRenderer.send(IPC.recordingPcmChunk, id, track, chunk),
     stop: (input) => ipcRenderer.invoke(IPC.recordingStop, input),
@@ -43,10 +45,10 @@ const api: ChismositoApi = {
     reveal: (path) => ipcRenderer.invoke(IPC.notesReveal, path),
     resummarize: (path) => ipcRenderer.invoke(IPC.notesResummarize, path),
     duplicate: (path) => ipcRenderer.invoke(IPC.notesDuplicate, path),
-    audioBytes: (path) => ipcRenderer.invoke(IPC.notesAudioBytes, path),
-    retranscribeBegin: (path, samples) =>
-      ipcRenderer.invoke(IPC.notesRetranscribeBegin, path, samples),
-    retranscribeChunk: (id, chunk) => ipcRenderer.invoke(IPC.notesRetranscribeChunk, id, chunk),
+    audioBytes: (path, track) => ipcRenderer.invoke(IPC.notesAudioBytes, path, track),
+    retranscribeBegin: (path) => ipcRenderer.invoke(IPC.notesRetranscribeBegin, path),
+    retranscribeChunk: (id, track, chunk) =>
+      ipcRenderer.invoke(IPC.notesRetranscribeChunk, id, track, chunk),
     retranscribeFinish: (id) => ipcRenderer.invoke(IPC.notesRetranscribeFinish, id),
     retranscribeCancel: (id) => ipcRenderer.invoke(IPC.notesRetranscribeCancel, id),
     search: (query) => ipcRenderer.invoke(IPC.notesSearch, query)

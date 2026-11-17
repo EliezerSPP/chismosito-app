@@ -12,6 +12,7 @@ export const IPC = {
 
   recordingStart: 'recording:start',
   recordingWebmChunk: 'recording:webm-chunk',
+  recordingTrackChunk: 'recording:track-chunk',
   recordingPcmChunk: 'recording:pcm-chunk',
   recordingStop: 'recording:stop',
   recordingCancel: 'recording:cancel',

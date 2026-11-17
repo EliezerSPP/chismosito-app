@@ -455,6 +455,7 @@ export interface ChismositoApi {
   recording: {
     start(input: RecordingStartInput): Promise<RecordingStartResult>
     sendWebmChunk(id: string, chunk: ArrayBuffer): void
+    sendTrackChunk(id: string, track: 'you' | 'others', chunk: ArrayBuffer): void
     sendPcmChunk(id: string, track: 'mic' | 'system', chunk: ArrayBuffer): void
     stop(input: RecordingStopInput): Promise<Job>
     cancel(id: string): Promise<void>
@@ -476,9 +477,11 @@ export interface ChismositoApi {
     reveal(path: string): Promise<void>
     resummarize(path: string): Promise<void>
     duplicate(path: string): Promise<NoteDetail>
-    audioBytes(path: string): Promise<ArrayBuffer>
-    retranscribeBegin(path: string, samples: number): Promise<{ id: string }>
-    retranscribeChunk(id: string, chunk: ArrayBuffer): Promise<void>
+    audioBytes(path: string, track?: 'mix' | 'you' | 'others'): Promise<ArrayBuffer>
+    retranscribeBegin(
+      path: string
+    ): Promise<{ id: string; needs: Array<'mixed' | 'you' | 'others'> }>
+    retranscribeChunk(id: string, track: 'mixed' | 'you' | 'others', chunk: ArrayBuffer): Promise<void>
     retranscribeFinish(id: string): Promise<Job>
     retranscribeCancel(id: string): Promise<void>
     search(query: string): Promise<NoteMeta[]>

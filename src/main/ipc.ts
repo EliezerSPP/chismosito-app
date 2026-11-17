@@ -41,7 +41,8 @@ import type { LlmClient } from './llm/summarizer'
 import type { JevClient } from './llm/jev'
 import type { DriveManager } from './drive/manager'
 import type { ChatAssistant } from './chat/assistant'
-import { retranscribeSessions } from './notes/retranscribe'
+import { hasTrackFiles, retranscribeSessions } from './notes/retranscribe'
+import { trackFileName } from '@shared/recording-tracks'
 import { getEnv } from './env'
 import { whisperModel } from '@shared/whisper-models'
 import { log } from './lib/logger'
@@ -198,6 +199,13 @@ export function registerIpc(context: MainContext): void {
     context.sessions.sendWebmChunk(id, normalizeChunk(chunk))
   })
   ipcMain.on(
+    IPC.recordingTrackChunk,
+    (_event, id: string, track: 'you' | 'others', chunk: ArrayBuffer | Uint8Array) => {
+      if (typeof id !== 'string' || (track !== 'you' && track !== 'others')) return
+      context.sessions.appendTrackChunk(id, track, normalizeChunk(chunk))
+    }
+  )
+  ipcMain.on(
     IPC.recordingPcmChunk,
     (_event, id: string, track: 'mic' | 'system', chunk: ArrayBuffer | Uint8Array) => {
       if (typeof id !== 'string' || (track !== 'mic' && track !== 'system')) return
@@ -304,11 +312,21 @@ export function registerIpc(context: MainContext): void {
 
   ipcMain.handle(
     IPC.notesAudioBytes,
-    async (_event, path: string): Promise<ArrayBuffer> => {
+    async (
+      _event,
+      path: string,
+      track?: 'mix' | 'you' | 'others'
+    ): Promise<ArrayBuffer> => {
       const note = await context.notes.get(String(path))
       if (!note) throw new Error('La nota no existe')
       if (!note.audio) throw new Error('La nota no tiene audio guardado')
-      const absolute = join(dirname(note.path), note.audio)
+      const fileName =
+        track === 'you'
+          ? trackFileName(note.audio, 'you')
+          : track === 'others'
+            ? trackFileName(note.audio, 'others')
+            : note.audio
+      const absolute = join(dirname(note.path), fileName)
       if (!existsSync(absolute)) throw new Error('No se encontró el archivo de audio')
       const info = await stat(absolute)
       if (info.size > 2 * 1024 * 1024 * 1024) {
@@ -321,30 +339,41 @@ export function registerIpc(context: MainContext): void {
 
   ipcMain.handle(
     IPC.notesRetranscribeBegin,
-    async (_event, path: string, samples: number): Promise<{ id: string }> => {
+    async (
+      _event,
+      path: string
+    ): Promise<{ id: string; needs: Array<'mixed' | 'you' | 'others'> }> => {
       if (context.sessions.isRecording()) {
         throw new Error('Detén la grabación antes de re-transcribir')
       }
       const note = await context.notes.get(String(path))
       if (!note) throw new Error('La nota no existe')
       if (!note.audio) throw new Error('La nota no tiene audio guardado')
-      if (!existsSync(join(dirname(note.path), note.audio))) {
+      const dir = dirname(note.path)
+      if (!existsSync(join(dir, note.audio))) {
         throw new Error('No se encontró el archivo de audio de la nota')
       }
-      return retranscribeSessions().begin(note.path, Number(samples))
+      const mode = hasTrackFiles(dir, note.audio) ? 'tracks' : 'mixed'
+      return retranscribeSessions().begin(note.path, mode)
     }
   )
   ipcMain.handle(
     IPC.notesRetranscribeChunk,
-    (_event, id: string, chunk: ArrayBuffer | Uint8Array): void => {
-      retranscribeSessions().append(String(id), normalizeChunk(chunk))
+    (
+      _event,
+      id: string,
+      track: 'mixed' | 'you' | 'others',
+      chunk: ArrayBuffer | Uint8Array
+    ): void => {
+      if (track !== 'mixed' && track !== 'you' && track !== 'others') return
+      retranscribeSessions().append(String(id), track, normalizeChunk(chunk))
     }
   )
   ipcMain.handle(
     IPC.notesRetranscribeFinish,
     async (_event, id: string): Promise<Job> => {
-      const { wavPath, notePath } = retranscribeSessions().finish(String(id))
-      const note = await context.notes.get(notePath)
+      const finished = retranscribeSessions().finish(String(id))
+      const note = await context.notes.get(finished.notePath)
       if (!note) throw new Error('La nota no existe')
       const whisperStatus = await context.whisper.status()
       const job = context.jobs.enqueue({
@@ -352,9 +381,9 @@ export function registerIpc(context: MainContext): void {
         baseName: note.baseName,
         notePath: note.path,
         audioPath: note.path,
-        micWavPath: null,
-        systemWavPath: null,
-        transcribeAudioPath: wavPath,
+        micWavPath: finished.youWavPath,
+        systemWavPath: finished.othersWavPath,
+        transcribeAudioPath: finished.wavPath,
         durationSeconds: note.durationSeconds,
         language: note.language,
         hasMic: false,

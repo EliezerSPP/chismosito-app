@@ -11,6 +11,7 @@ import type { WhisperManager } from '../whisper/manager'
 import { runWhisper, type RawSegment } from '../whisper/runner'
 import { cleanSegmentText, mergeSpeakers, renderTranscript } from '../whisper/merge'
 import { assignSpeakers, nearestSpeaker, parseSpeakerTimeline } from '../whisper/relabel'
+import { MIN_TRACK_PEAK, wavPeak } from '../whisper/wav-peak'
 import type { LlmClient } from '../llm/summarizer'
 import type { JevClient, FolderSuggestion } from '../llm/jev'
 import { ensureDir, writeAtomic } from '../lib/fs'
@@ -312,6 +313,12 @@ export class JobRunner {
           kind: 'mic' | 'system' | 'mixed'
         ): Promise<RawSegment[]> => {
           if (!wav || !existsSync(wav)) return []
+          // Pista sin señal real: whisper alucinaría frases sobre el ruido.
+          const peak = await wavPeak(wav).catch(() => 1)
+          if (peak < MIN_TRACK_PEAK) {
+            log.info(`Pista ${kind} sin señal (pico ${peak.toFixed(4)}); se omite`)
+            return []
+          }
           const stage: JobStage =
             kind === 'system' ? 'transcribing_system' : 'transcribing_mic'
           const stageMessage =
@@ -320,7 +327,9 @@ export class JobRunner {
 
           const attempt = async (device: 'cpu' | 'cuda'): Promise<RawSegment[]> =>
             runWhisper({
-              noContext: kind === 'mixed',
+              // Sin contexto previo en todas las pistas: en tramos sin voz el
+              // prompt se retroalimenta y el modelo inventa frases.
+              noContext: true,
               vadModelPath:
                 settings.vadEnabled && this.deps.whisper.hasVad()
                   ? this.deps.whisper.vadPath()
