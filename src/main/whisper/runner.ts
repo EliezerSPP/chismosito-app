@@ -18,6 +18,8 @@ export interface WhisperRunOptions {
   language: string
   device: 'cpu' | 'cuda'
   threads: number
+  /** Sin contexto previo: evita bucles de repetición en audio con silencios. */
+  noContext?: boolean
   signal?: AbortSignal
   onProgress?: (percent: number) => void
 }
@@ -77,6 +79,7 @@ export async function runWhisper(options: WhisperRunOptions): Promise<RawSegment
     outputBase,
     '-pp'
   ]
+  if (options.noContext) args.push('-mc', '0', '-sns')
   if (options.device === 'cpu') args.push('-ng')
 
   log.info('whisper.cpp', args.join(' '))
