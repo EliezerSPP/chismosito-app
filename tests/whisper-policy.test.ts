@@ -124,26 +124,38 @@ describe('modelFit', () => {
 })
 
 describe('describeWhisperModels', () => {
-  it('asigna perfiles y respeta el orden del catálogo', () => {
+  it('pone lo sugerido primero (rápido → equilibrado → calidad) y los .en al final', () => {
     const entries = describeWhisperModels(cuda(4 * gb))
-    expect(entries[0].spec.langs).toBe('multi')
-    expect(entries[entries.length - 1].spec.langs).toBe('en')
 
-    const tagged = entries.filter((entry) => entry.roles.length > 0)
-    expect(tagged.map((entry) => entry.spec.id)).toEqual([
+    expect(entries.slice(0, 3).map((entry) => entry.spec.id)).toEqual([
       'large-v3-turbo-q5_0',
       'large-v3-turbo-q8_0',
       'large-v3-q5_0'
     ])
-    expect(tagged.find((entry) => entry.roles.includes('quality'))?.spec.id).toBe('large-v3-q5_0')
-    expect(tagged.find((entry) => entry.roles.includes('fastest'))?.spec.id).toBe(
-      'large-v3-turbo-q5_0'
-    )
+    expect(entries.slice(0, 3).map((entry) => entry.roles[0])).toEqual([
+      'fastest',
+      'balanced',
+      'quality'
+    ])
+    // El resto mantiene el orden del catálogo y los .en siguen al final.
+    expect(entries.slice(3).every((entry) => entry.roles.length === 0)).toBe(true)
+    expect(entries[entries.length - 1].spec.langs).toBe('en')
+    expect(entries.filter((entry) => entry.spec.langs === 'multi')).toHaveLength(21)
+  })
+
+  it('en CPU también sube lo sugerido al principio', () => {
+    const entries = describeWhisperModels(hw({ ramMb: 16 * gb }))
+    expect(entries[0].spec.id).toBe('tiny-q5_1')
+    expect(entries[1].spec.id).toBe('small-q5_1')
+    expect(entries[2].spec.id).toBe('small-f16')
+    expect(entries[0].roles).toEqual(['fastest'])
   })
 
   it('un modelo puede acumular dos perfiles cuando coinciden', () => {
     const entries = describeWhisperModels(hw({ ramMb: 3 * gb }))
     const fastest = entries.find((entry) => entry.roles.includes('fastest'))
     expect(fastest?.roles).toContain('fastest')
+    // Con RAM corta los perfiles colapsan: sigue apareciendo primero.
+    expect(entries[0].roles.length).toBeGreaterThan(0)
   })
 })

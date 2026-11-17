@@ -83,9 +83,11 @@ export function WhisperModelPicker({
       model.quant.toLowerCase().includes(needle) ||
       model.family.toLowerCase().includes(needle)
 
+    const filtered = status.models.filter(match)
     return {
-      multi: status.models.filter((model) => model.langs === 'multi' && match(model)),
-      english: status.models.filter((model) => model.langs === 'en' && match(model))
+      suggested: filtered.filter((model) => model.roles.length > 0),
+      multi: filtered.filter((model) => model.langs === 'multi' && model.roles.length === 0),
+      english: filtered.filter((model) => model.langs === 'en')
     }
   }, [query, status.models])
 
@@ -279,9 +281,19 @@ export function WhisperModelPicker({
             </div>
 
             <ul role="listbox" className="max-h-80 overflow-y-auto">
-              <li className="px-3 pb-1 pt-2 text-[9px] font-semibold uppercase tracking-wide text-muted">
-                Multilingüe
-              </li>
+              {groups.suggested.length > 0 ? (
+                <>
+                  <li className="px-3 pb-1 pt-2 text-[9px] font-semibold uppercase tracking-wide text-accent">
+                    Sugeridos para tu equipo
+                  </li>
+                  {groups.suggested.map(renderRow)}
+                </>
+              ) : null}
+              {groups.multi.length > 0 ? (
+                <li className="px-3 pb-1 pt-3 text-[9px] font-semibold uppercase tracking-wide text-muted">
+                  Multilingüe
+                </li>
+              ) : null}
               {groups.multi.map(renderRow)}
               <li
                 className="flex items-center gap-1 px-3 pb-1 pt-3 text-[9px] font-semibold uppercase tracking-wide text-muted"

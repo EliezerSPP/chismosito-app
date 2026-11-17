@@ -181,16 +181,39 @@ export interface WhisperCatalogueEntry {
 }
 
 /** Catálogo con el veredicto por equipo, en el orden de presentación. */
+/** Orden de presentación de los perfiles: el más rápido primero. */
+const ROLE_ORDER: WhisperProfile[] = ['fastest', 'balanced', 'quality']
+
+/**
+ * Catálogo ordenado para la UI: primero lo sugerido para este equipo (rápido,
+ * equilibrado, calidad), después el resto de multilingües en orden de catálogo
+ * y al final los modelos solo-inglés.
+ */
 export function describeWhisperModels(hardware: WhisperHardware): WhisperCatalogueEntry[] {
   const { profiles } = recommendWhisperProfiles(hardware)
   const byId = new Map<string, WhisperProfile[]>()
-  for (const role of ['fastest', 'balanced', 'quality'] as WhisperProfile[]) {
+  for (const role of ROLE_ORDER) {
     const id = profiles[role]
     byId.set(id, [...(byId.get(id) ?? []), role])
   }
-  return WHISPER_MODELS.map((spec) => ({
+
+  const rank = (roles: WhisperProfile[]): number =>
+    roles.length === 0 ? ROLE_ORDER.length : ROLE_ORDER.indexOf(roles[0])
+
+  return WHISPER_MODELS.map((spec, index) => ({
     spec,
     fit: modelFit(spec, hardware),
-    roles: byId.get(spec.id) ?? []
+    roles: byId.get(spec.id) ?? [],
+    index
   }))
+    .sort((a, b) => {
+      const langA = a.spec.langs === 'en' ? 1 : 0
+      const langB = b.spec.langs === 'en' ? 1 : 0
+      if (langA !== langB) return langA - langB
+      const rankA = rank(a.roles)
+      const rankB = rank(b.roles)
+      if (rankA !== rankB) return rankA - rankB
+      return a.index - b.index
+    })
+    .map(({ index: _index, ...entry }) => entry)
 }
