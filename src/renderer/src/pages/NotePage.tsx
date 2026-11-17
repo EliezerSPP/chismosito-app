@@ -92,6 +92,10 @@ export function NotePage(): React.JSX.Element {
   }, [load, notesRevision])
 
   useEffect(() => {
+    if (liveRef.current) liveRef.current.scrollTop = liveRef.current.scrollHeight
+  }, [liveSegments.length])
+
+  useEffect(() => {
     if (activeTab !== 'chat') return
     if (!note || note.status === 'processing' || note.status === 'recording') return
     if (note.transcript.length === 0) return
@@ -144,10 +148,6 @@ export function NotePage(): React.JSX.Element {
       </div>
     )
   }
-
-  useEffect(() => {
-    if (liveRef.current) liveRef.current.scrollTop = liveRef.current.scrollHeight
-  }, [liveSegments.length])
 
   const transcriptIndex = note.content.indexOf('## Transcripción')
   const beforeTranscript = transcriptIndex >= 0 ? note.content.slice(0, transcriptIndex) : note.content
