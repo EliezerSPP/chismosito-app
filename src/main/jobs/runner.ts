@@ -319,6 +319,10 @@ export class JobRunner {
           const attempt = async (device: 'cpu' | 'cuda'): Promise<RawSegment[]> =>
             runWhisper({
               noContext: kind === 'mixed',
+              vadModelPath:
+                settings.vadEnabled && this.deps.whisper.hasVad()
+                  ? this.deps.whisper.vadPath()
+                  : null,
               cliPath:
                 device === 'cuda'
                   ? this.deps.whisper.cudaCliPath() ?? this.deps.whisper.cpuCliPath()

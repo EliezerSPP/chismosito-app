@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { CUDA_URL, CUDA_ZIP_NAME } from '@shared/constants'
+import { VAD_MODEL } from '@shared/whisper-vad'
 import {
   LEGACY_MODEL_ID,
   WHISPER_MODELS,
@@ -241,6 +242,18 @@ export class WhisperManager {
     return this.cudaCliPath() !== null
   }
 
+  vadPath(): string {
+    return join(this.modelsDir(), VAD_MODEL.file)
+  }
+
+  hasVad(): boolean {
+    try {
+      return existsSync(this.vadPath()) && statSync(this.vadPath()).size === VAD_MODEL.bytes
+    } catch {
+      return false
+    }
+  }
+
   activeDevice(): 'cpu' | 'cuda' {
     const setting = this.settings.get().whisperDevice
     if (setting === 'cpu') return 'cpu'
@@ -321,7 +334,8 @@ export class WhisperManager {
       activeModelId: active.source === 'managed' ? active.id : null,
       customPath: this.settings.get().whisperModelPath?.trim() || null,
       installedBytes: this.installedBytes(),
-      diskFreeBytes: this.diskFree()
+      diskFreeBytes: this.diskFree(),
+      vad: { present: this.hasVad(), path: this.vadPath(), bytes: VAD_MODEL.bytes }
     }
   }
 
@@ -444,6 +458,63 @@ export class WhisperManager {
       }
     } finally {
       closeSync(fd)
+    }
+  }
+
+  async downloadVad(): Promise<WhisperStatus> {
+    if (this.abortController) throw new Error('Ya hay una descarga en curso')
+    if (this.hasVad()) return this.status()
+    const controller = new AbortController()
+    this.abortController = controller
+    try {
+      this.emit({
+        kind: 'vad',
+        status: 'downloading',
+        receivedBytes: 0,
+        totalBytes: VAD_MODEL.bytes,
+        percent: 0
+      })
+      await downloadModelFile({
+        url: VAD_MODEL.url,
+        target: this.vadPath(),
+        expectedBytes: VAD_MODEL.bytes,
+        sha256: VAD_MODEL.sha256,
+        signal: controller.signal,
+        fetchImpl: ((input: RequestInfo | URL, init?: RequestInit) =>
+          net.fetch(input as string, init as never)) as typeof fetch,
+        onProgress: ({ receivedBytes, totalBytes, phase }) => {
+          this.emit({
+            kind: 'vad',
+            status: phase === 'verifying' ? 'verifying' : 'downloading',
+            receivedBytes,
+            totalBytes,
+            percent: totalBytes > 0 ? Math.min(100, Math.floor((receivedBytes / totalBytes) * 100)) : 0
+          })
+        }
+      })
+      this.emit({
+        kind: 'vad',
+        status: 'done',
+        receivedBytes: VAD_MODEL.bytes,
+        totalBytes: VAD_MODEL.bytes,
+        percent: 100
+      })
+      log.info('Modelo VAD descargado y verificado')
+      return this.status()
+    } catch (error) {
+      const aborted = controller.signal.aborted
+      this.emit({
+        kind: 'vad',
+        status: aborted ? 'cancelled' : 'error',
+        receivedBytes: this.progress.receivedBytes,
+        totalBytes: this.progress.totalBytes,
+        percent: this.progress.percent,
+        message: aborted ? 'Descarga cancelada' : (error as Error).message
+      })
+      if (!aborted) log.error('Error descargando el modelo VAD', error)
+      throw error
+    } finally {
+      this.abortController = null
     }
   }
 

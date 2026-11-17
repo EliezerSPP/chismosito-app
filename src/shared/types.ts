@@ -33,6 +33,8 @@ export interface AppSettings {
   /** Id del catálogo ('' = automático según el equipo). */
   whisperModel: string
   whisperModelPath: string | null
+  /** Cortar silencios con VAD (silero) antes de transcribir. */
+  vadEnabled: boolean
   keepTempWav: boolean
   llmModel: string
   folderSuggestions: boolean
@@ -151,9 +153,10 @@ export interface WhisperStatus {
   customPath: string | null
   installedBytes: number
   diskFreeBytes: number | null
+  vad: { present: boolean; path: string; bytes: number }
 }
 
-export type DownloadKind = 'model' | 'cuda'
+export type DownloadKind = 'model' | 'cuda' | 'vad'
 export type DownloadStatus =
   | 'idle'
   | 'downloading'
@@ -481,6 +484,7 @@ export interface ChismositoApi {
     status(): Promise<WhisperStatus>
     downloadModel(modelId: string): Promise<WhisperStatus>
     removeModel(modelId: string): Promise<WhisperStatus>
+    downloadVad(): Promise<WhisperStatus>
     chooseCustom(): Promise<WhisperStatus>
     clearCustom(): Promise<WhisperStatus>
     downloadCuda(): Promise<WhisperStatus>

@@ -393,7 +393,12 @@ export function registerIpc(context: MainContext): void {
   ipcMain.handle(
     IPC.whisperDownloadModel,
     async (_event, modelId: string): Promise<WhisperStatus> => {
-      const status = await context.whisper.downloadModel(String(modelId ?? ''))
+      let status = await context.whisper.downloadModel(String(modelId ?? ''))
+      // El VAD pesa 0.9 MB: se baja junto con el modelo para que el usuario no
+      // tenga que instalar nada más.
+      if (context.settings.get().vadEnabled && !status.vad.present) {
+        status = await context.whisper.downloadVad().catch(() => status)
+      }
       toast('success', 'Modelo de transcripción descargado y verificado')
       return status
     }
@@ -427,6 +432,11 @@ export function registerIpc(context: MainContext): void {
   ipcMain.handle(IPC.whisperClearCustom, (): Promise<WhisperStatus> => {
     context.settings.update({ whisperModelPath: null })
     return context.whisper.status()
+  })
+  ipcMain.handle(IPC.whisperDownloadVad, async (): Promise<WhisperStatus> => {
+    const status = await context.whisper.downloadVad()
+    toast('success', 'Detector de voz (VAD) instalado')
+    return status
   })
   ipcMain.handle(IPC.whisperDownloadCuda, async (): Promise<WhisperStatus> => {
     const status = await context.whisper.downloadCuda()

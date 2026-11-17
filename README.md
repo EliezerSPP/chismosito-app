@@ -91,6 +91,7 @@ El catálogo incluye todos los `ggml-*.bin` de whisper.cpp (tiny → large-v3, c
 - Muestra primero los sugeridos ("Sugeridos para tu equipo"), después el resto de multilingües y al final los solo-inglés; por modelo indica peso, VRAM y RAM estimadas y si cabe en tu GPU o iría por CPU.
 - Descarga con reanudación (`.part`), verifica **sha256** contra el catálogo y registra lo instalado en `models/index.json`.
 - Agrupa al final los modelos **solo inglés** (`EN`): no transcriben español.
+- **Detección de voz (VAD)**: un modelo silero de 0.9 MB (`ggml-org/whisper-vad`) corta los silencios antes de transcribir, lo que evita las alucinaciones típicas de whisper en tramos sin voz. Se descarga solo al bajar el primer modelo y se puede activar o desactivar en Ajustes → Transcripción.
 - Permite borrar modelos que no estés usando y elegir un `.bin` propio (se valida la cabecera `ggml` y se referencia donde esté, sin copiarlo).
 
 `WHISPER_MODEL_PATH` en el `.env` sigue teniendo prioridad y equivale a elegir un modelo propio.

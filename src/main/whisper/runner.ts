@@ -20,6 +20,8 @@ export interface WhisperRunOptions {
   threads: number
   /** Sin contexto previo: evita bucles de repetición en audio con silencios. */
   noContext?: boolean
+  /** Modelo VAD (silero): corta el audio en tramos con voz. */
+  vadModelPath?: string | null
   signal?: AbortSignal
   onProgress?: (percent: number) => void
 }
@@ -52,19 +54,7 @@ function segmentMs(segment: WhisperJsonSegment): { from: number; to: number } {
   return { from: Number(from) || 0, to: Number(to) || 0 }
 }
 
-export async function runWhisper(options: WhisperRunOptions): Promise<RawSegment[]> {
-  if (!existsSync(options.cliPath)) {
-    throw new Error('No se encontró whisper-cli.exe. Reinstala la aplicación.')
-  }
-  if (!existsSync(options.modelPath)) {
-    throw new Error('El modelo de whisper no está descargado. Descárgalo en Ajustes.')
-  }
-  if (!existsSync(options.wavPath)) {
-    throw new Error('No se encontró el audio a transcribir.')
-  }
-
-  const workDir = await mkdtemp(join(tmpdir(), 'chismosito-whisper-'))
-  const outputBase = join(workDir, 'result')
+export function buildWhisperArgs(options: WhisperRunOptions, outputBase: string): string[] {
   const args = [
     '-m',
     options.modelPath,
@@ -80,7 +70,25 @@ export async function runWhisper(options: WhisperRunOptions): Promise<RawSegment
     '-pp'
   ]
   if (options.noContext) args.push('-mc', '0', '-sns')
+  if (options.vadModelPath) args.push('--vad', '-vm', options.vadModelPath)
   if (options.device === 'cpu') args.push('-ng')
+  return args
+}
+
+export async function runWhisper(options: WhisperRunOptions): Promise<RawSegment[]> {
+  if (!existsSync(options.cliPath)) {
+    throw new Error('No se encontró whisper-cli.exe. Reinstala la aplicación.')
+  }
+  if (!existsSync(options.modelPath)) {
+    throw new Error('El modelo de whisper no está descargado. Descárgalo en Ajustes.')
+  }
+  if (!existsSync(options.wavPath)) {
+    throw new Error('No se encontró el audio a transcribir.')
+  }
+
+  const workDir = await mkdtemp(join(tmpdir(), 'chismosito-whisper-'))
+  const outputBase = join(workDir, 'result')
+  const args = buildWhisperArgs(options, outputBase)
 
   log.info('whisper.cpp', args.join(' '))
 

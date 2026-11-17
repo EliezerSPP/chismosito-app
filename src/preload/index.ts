@@ -63,6 +63,7 @@ const api: ChismositoApi = {
     chooseCustom: () => ipcRenderer.invoke(IPC.whisperChooseCustom),
     clearCustom: () => ipcRenderer.invoke(IPC.whisperClearCustom),
     downloadCuda: () => ipcRenderer.invoke(IPC.whisperDownloadCuda),
+    downloadVad: () => ipcRenderer.invoke(IPC.whisperDownloadVad),
     cancelDownload: () => ipcRenderer.invoke(IPC.whisperCancelDownload)
   },
   llm: {

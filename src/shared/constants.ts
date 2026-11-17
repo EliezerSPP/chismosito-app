@@ -48,6 +48,7 @@ export const IPC = {
   whisperChooseCustom: 'whisper:choose-custom',
   whisperClearCustom: 'whisper:clear-custom',
   whisperDownloadCuda: 'whisper:download-cuda',
+  whisperDownloadVad: 'whisper:download-vad',
   whisperCancelDownload: 'whisper:cancel-download',
 
   llmTest: 'llm:test',
