@@ -129,6 +129,15 @@ export function SettingsPage(): React.JSX.Element {
       if (patch.notesDir) {
         await refreshNotes()
       }
+      // El modelo activo y el dispositivo se resuelven en main a partir de los
+      // ajustes, así que hay que volver a pedir el estado o la UI queda vieja.
+      if (
+        patch.whisperModel !== undefined ||
+        patch.whisperModelPath !== undefined ||
+        patch.whisperDevice !== undefined
+      ) {
+        await refreshWhisper()
+      }
     } catch (error) {
       pushToast('error', errorMessage(error))
     } finally {

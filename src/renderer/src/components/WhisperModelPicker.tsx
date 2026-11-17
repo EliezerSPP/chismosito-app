@@ -137,6 +137,11 @@ export function WhisperModelPicker({
               if (model.installed) onSelect(model.id)
               else onDownload(model.id)
             }}
+            title={
+              model.installed
+                ? `Usar ${model.label} · ${model.quant}`
+                : `Descargar ${model.label} · ${model.quant} para poder usarlo`
+            }
             className="min-w-0 flex-1 text-left"
           >
             <span className="flex flex-wrap items-center gap-1.5">
