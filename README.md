@@ -54,6 +54,8 @@ El instalador queda en `dist/`. No está firmado, así que Windows SmartScreen p
 
 La **API key** se configura dentro de la app: **Ajustes → Resumen con LLM → API key de OpenCode**. Se guarda cifrada con DPAPI (Windows) en `%APPDATA%\chismosito\secrets.json`, nunca se envía al renderer y se aplica al instante (sin reiniciar). La misma key se usa para el resumen, el chat y Jev. Puedes quitarla desde el mismo panel.
 
+El modelo se elige en **Ajustes → Resumen con LLM → Modelo**: la app pide `GET /models` al endpoint configurado con tu API key y arma la lista (DeepSeek V4.1 Flash, Claude Haiku 5.5, Kimi, GLM, Qwen, MiMo…). Si la API no responde, cae en una lista local de respaldo y lo indica bajo el selector. También puedes escribir un ID a mano con «Otro modelo».
+
 El endpoint y el modelo por defecto se siguen leyendo del `.env` (copia `.env.example` a `.env`). El default es OpenCode Go (`/go/openai/v1`), que pide el ID de modelo sin prefijo:
 
 ```dotenv

@@ -57,6 +57,7 @@ const api: ChismositoApi = {
   },
   llm: {
     test: () => ipcRenderer.invoke(IPC.llmTest),
+    models: () => ipcRenderer.invoke(IPC.llmModels),
     setApiKey: (key) => ipcRenderer.invoke(IPC.llmKeySet, key),
     clearApiKey: () => ipcRenderer.invoke(IPC.llmKeyClear),
     scrubEnvKey: () => ipcRenderer.invoke(IPC.llmEnvKeyScrub)
