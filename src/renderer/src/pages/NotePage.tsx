@@ -51,8 +51,10 @@ export function NotePage(): React.JSX.Element {
   const [editOpen, setEditOpen] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [confirmRegenerate, setConfirmRegenerate] = useState(false)
+  const [confirmReprocess, setConfirmReprocess] = useState(false)
   const [busyBackup, setBusyBackup] = useState(false)
   const [busyRegenerate, setBusyRegenerate] = useState(false)
+  const [busyReprocess, setBusyReprocess] = useState(false)
   const [busySuggestion, setBusySuggestion] = useState(false)
   const [chatThreadId, setChatThreadId] = useState<string | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
@@ -197,6 +199,18 @@ export function NotePage(): React.JSX.Element {
       pushToast('error', errorMessage(regenerateError))
     } finally {
       setBusyRegenerate(false)
+    }
+  }
+
+  const reprocess = async (): Promise<void> => {
+    setBusyReprocess(true)
+    try {
+      await window.chismosito.notes.reprocess(note.path)
+      await load()
+    } catch (reprocessError) {
+      pushToast('error', errorMessage(reprocessError))
+    } finally {
+      setBusyReprocess(false)
     }
   }
 
@@ -394,6 +408,15 @@ export function NotePage(): React.JSX.Element {
                   Reintentar procesamiento
                 </button>
               ) : null}
+              {note.audio ? (
+                <button
+                  onClick={() => void reprocess()}
+                  disabled={busyReprocess || jobActive}
+                  className="ml-3 mt-2 text-[11px] font-medium text-red-700 underline hover:no-underline disabled:opacity-50 dark:text-red-300"
+                >
+                  {busyReprocess ? 'Reprocesando…' : 'Reprocesar desde el audio'}
+                </button>
+              ) : null}
             </div>
           </div>
         </div>
@@ -528,20 +551,39 @@ export function NotePage(): React.JSX.Element {
                   {note.transcript.length} fragmentos · haz clic en un tiempo para escuchar ese momento
                 </p>
               </div>
-              {note.transcript.length > 0 ? (
-                <button
-                  onClick={() => setConfirmRegenerate(true)}
-                  disabled={busyRegenerate || !env?.llm.configured || jobActive}
-                  className={cn('btn-ghost h-8 px-2 text-[11px]', !env?.llm.configured && 'hidden')}
-                  title="Volver a generar resumen, decisiones y acciones"
-                >
-                  {busyRegenerate ? (
-                    <Loader2 className="size-3.5 animate-spin" />
-                  ) : (
-                    <RefreshCw className="size-3.5" />
-                  )}
-                  Regenerar resumen
-                </button>
+              {note.transcript.length > 0 || note.audio ? (
+                <div className="flex flex-wrap items-center justify-end gap-1">
+                  {note.transcript.length > 0 ? (
+                    <button
+                      onClick={() => setConfirmRegenerate(true)}
+                      disabled={busyRegenerate || !env?.llm.configured || jobActive}
+                      className={cn('btn-ghost h-8 px-2 text-[11px]', !env?.llm.configured && 'hidden')}
+                      title="Volver a generar resumen, decisiones y acciones"
+                    >
+                      {busyRegenerate ? (
+                        <Loader2 className="size-3.5 animate-spin" />
+                      ) : (
+                        <RefreshCw className="size-3.5" />
+                      )}
+                      Regenerar resumen
+                    </button>
+                  ) : null}
+                  {note.audio ? (
+                    <button
+                      onClick={() => setConfirmReprocess(true)}
+                      disabled={busyReprocess || jobActive}
+                      className="btn-ghost h-8 px-2 text-[11px]"
+                      title="Volver a transcribir el audio completo desde el WebM original"
+                    >
+                      {busyReprocess ? (
+                        <Loader2 className="size-3.5 animate-spin" />
+                      ) : (
+                        <FileAudio className="size-3.5" />
+                      )}
+                      Reprocesar audio
+                    </button>
+                  ) : null}
+                </div>
               ) : null}
             </div>
 
@@ -603,6 +645,15 @@ export function NotePage(): React.JSX.Element {
         confirmLabel="Regenerar"
         onClose={() => setConfirmRegenerate(false)}
         onConfirm={() => void regenerate()}
+      />
+
+      <ConfirmDialog
+        open={confirmReprocess}
+        title="Reprocesar el audio completo"
+        description="Se volverá a transcribir el WebM original de principio a fin y se reemplazará la transcripción actual. Se guardará una copia de la nota como .bak."
+        confirmLabel="Reprocesar"
+        onClose={() => setConfirmReprocess(false)}
+        onConfirm={() => void reprocess()}
       />
     </div>
   )

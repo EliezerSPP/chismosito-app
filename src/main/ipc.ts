@@ -1,7 +1,8 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { existsSync } from 'node:fs'
+import { copyFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
-import { isAbsolute, resolve } from 'node:path'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
 import type {
   AppEvent,
   AppInfo,
@@ -17,6 +18,7 @@ import type {
   DriveStatus,
   EnvStatus,
   LlmKeyStatus,
+  LlmModelList,
   LlmTestResult,
   NoteDetail,
   NoteMeta,
@@ -290,6 +292,42 @@ export function registerIpc(context: MainContext): void {
     })
     toast('info', 'Regenerando el resumen…')
   })
+  ipcMain.handle(IPC.notesReprocess, async (_event, path: string): Promise<void> => {
+    const note = await context.notes.get(String(path))
+    if (!note) throw new Error('La nota no existe')
+    if (!note.audio) throw new Error('Esta nota no tiene un archivo de audio para reprocesar')
+    const audioPath = join(dirname(note.path), note.audio)
+    if (!existsSync(audioPath)) throw new Error('El archivo de audio ya no está junto a la nota')
+
+    const activeJob = context.jobs
+      .list()
+      .some(
+        (job) =>
+          normalizePath(job.notePath) === normalizePath(note.path) &&
+          !['done', 'failed', 'cancelled'].includes(job.stage)
+      )
+    if (activeJob) throw new Error('Ya hay un procesamiento en curso para esta nota')
+
+    await copyFile(note.path, `${note.path}.bak`).catch((error) =>
+      log.warn('No se pudo respaldar la nota antes de reprocesar', error)
+    )
+
+    context.jobs.enqueue({
+      id: randomUUID(),
+      baseName: note.baseName,
+      notePath: note.path,
+      audioPath,
+      micWavPath: null,
+      systemWavPath: null,
+      durationSeconds: note.durationSeconds,
+      language: note.language,
+      hasMic: false,
+      hasSystem: false,
+      meetingDate: note.date || new Date().toISOString(),
+      reprocessAudio: true
+    })
+    toast('info', 'Reprocesando el audio completo…')
+  })
 
   ipcMain.handle(IPC.foldersCreate, async (_event, path: string) => {
     const result = await context.notes.createFolder(String(path))
@@ -356,6 +394,7 @@ export function registerIpc(context: MainContext): void {
   ipcMain.handle(IPC.whisperCancelDownload, (): void => context.whisper.cancelDownload())
 
   ipcMain.handle(IPC.llmTest, (): Promise<LlmTestResult> => context.llm.test())
+  ipcMain.handle(IPC.llmModels, (): Promise<LlmModelList> => context.llm.listModels())
   ipcMain.handle(IPC.llmKeySet, (_event, key: string): LlmKeyStatus => {
     const status = context.secrets.setApiKey(String(key ?? ''))
     context.broadcast({ type: 'env-changed' })
@@ -443,4 +482,8 @@ function normalizeChunk(chunk: ArrayBuffer | Uint8Array): ArrayBuffer {
     return chunk.buffer.slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength) as ArrayBuffer
   }
   return chunk
+}
+
+function normalizePath(value: string): string {
+  return resolve(value).replace(/\\/g, '/').toLowerCase()
 }

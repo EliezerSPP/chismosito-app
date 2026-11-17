@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
   AlertTriangle,
@@ -23,11 +23,18 @@ import {
   Trash2,
   Volume2
 } from 'lucide-react'
-import type { AppSettings, DownloadProgress, LlmTestResult } from '@shared/types'
+import type {
+  AppSettings,
+  DownloadProgress,
+  LlmModelList,
+  LlmModelOption,
+  LlmTestResult
+} from '@shared/types'
 import { useAppStore } from '../store'
 import { ProgressBar } from '../components/ProgressBar'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { FolderManager } from '../components/FolderManager'
+import { ModelPicker } from '../components/ModelPicker'
 import { WhisperModelPicker } from '../components/WhisperModelPicker'
 import { errorMessage } from '../lib/errors'
 import { formatBytes, timeAgo } from '../lib/format'
@@ -62,6 +69,9 @@ export function SettingsPage(): React.JSX.Element {
   const [threads, setThreads] = useState(String(settings?.whisperThreads ?? 8))
   const [devices, setDevices] = useState<Array<{ deviceId: string; label: string }>>([])
   const [micPermissionError, setMicPermissionError] = useState<string | null>(null)
+  const [modelList, setModelList] = useState<LlmModelList | null>(null)
+  const [loadingModels, setLoadingModels] = useState(false)
+  const [customModel, setCustomModel] = useState(false)
   const [apiKey, setApiKey] = useState('')
   const [showApiKey, setShowApiKey] = useState(false)
   const [savingApiKey, setSavingApiKey] = useState(false)
@@ -78,6 +88,12 @@ export function SettingsPage(): React.JSX.Element {
   const [confirmDisconnect, setConfirmDisconnect] = useState(false)
   const [modelsDir, setModelsDir] = useState('')
   const sectionScrolled = useRef(false)
+
+  useEffect(() => {
+    if (!env) return
+    // La lista depende de la API key y del endpoint configurados.
+    void loadModels()
+  }, [env?.llm.configured, env?.llm.baseUrl])
 
   useEffect(() => {
     if (!settings) return
@@ -111,6 +127,15 @@ export function SettingsPage(): React.JSX.Element {
     if (!appInfo) return
     setModelsDir(`${appInfo.userData}\\models`)
   }, [appInfo])
+
+  const modelOptions = useMemo<LlmModelOption[]>(() => {
+    const list = modelList?.models ?? []
+    const saved = settings?.llmModel?.trim()
+    if (saved && !list.some((model) => model.id === saved)) {
+      return [...list, { id: saved, label: saved }]
+    }
+    return list
+  }, [modelList, settings?.llmModel])
 
   if (!settings) {
     return (
@@ -232,6 +257,17 @@ export function SettingsPage(): React.JSX.Element {
     await window.chismosito.whisper.cancelDownload()
   }
 
+  const loadModels = async (): Promise<void> => {
+    setLoadingModels(true)
+    try {
+      setModelList(await window.chismosito.llm.models())
+    } catch (error) {
+      pushToast('error', errorMessage(error))
+    } finally {
+      setLoadingModels(false)
+    }
+  }
+
   const saveApiKey = async (): Promise<void> => {
     const value = apiKey.trim()
     if (!value) {
@@ -245,6 +281,9 @@ export function SettingsPage(): React.JSX.Element {
       setLlmTest(null)
       setJevTest(null)
       await refreshEnv()
+      // Reemplazar una key existente no cambia `env.llm.configured`, así que el
+      // efecto que carga la lista no se dispara: la refrescamos aquí.
+      if (env?.llm.configured) void loadModels()
       pushToast('success', 'API key guardada')
     } catch (error) {
       pushToast('error', errorMessage(error))
@@ -754,43 +793,58 @@ export function SettingsPage(): React.JSX.Element {
             </div>
           </Row>
 
-          <Row label="Modelo" hint="Vacío usa el valor de LLM_MODEL del .env.">
+          <Row
+            label="Modelo"
+            hint="Lista del plan OpenCode Go con tu API key. “Default del .env” usa LLM_MODEL."
+          >
             <div className="max-w-xl space-y-2">
-              <input
-                className="field"
-                value={llmModel}
-                onChange={(event) => setLlmModel(event.target.value)}
-                onBlur={() =>
-                  llmModel !== settings.llmModel && void update({ llmModel: llmModel.trim() })
-                }
-                placeholder={env?.llm.model}
+              <ModelPicker
+                value={settings.llmModel}
+                defaultLabel={`Default del .env (${env?.llm.model ?? 'deepseek-v4.1-flash'})`}
+                options={modelOptions}
+                loading={loadingModels}
+                onRefresh={() => void loadModels()}
+                onChange={(id) => {
+                  setCustomModel(false)
+                  setLlmModel(id)
+                  if (id !== settings.llmModel) void update({ llmModel: id })
+                }}
+                onCustom={() => {
+                  setCustomModel(true)
+                  setLlmModel(settings.llmModel)
+                }}
               />
-              <div className="flex flex-wrap gap-1.5">
-                {[
-                  ['deepseek-v4.1-flash', 'Económico'],
-                  ['claude-haiku-5.5', 'Rápido'],
-                  ['claude-sonnet-5', 'Mejor calidad']
-                ].map(([model, label]) => (
-                  <button
-                    key={model}
-                    onClick={() => {
-                      setLlmModel(model)
-                      void update({ llmModel: model })
-                    }}
-                    className="chip hover:border-accent/40 hover:text-accent"
-                  >
-                    {label}: {model}
-                  </button>
-                ))}
-              </div>
-              {llmModel === 'claude-sonnet-5' ? (
+
+              {customModel ? (
+                <input
+                  className="field"
+                  autoFocus
+                  value={llmModel}
+                  onChange={(event) => setLlmModel(event.target.value)}
+                  onBlur={() => {
+                    if (llmModel.trim() !== settings.llmModel) {
+                      void update({ llmModel: llmModel.trim() })
+                    }
+                  }}
+                  placeholder="deepseek-v4.1-flash"
+                />
+              ) : null}
+
+              {settings.llmModel === 'claude-sonnet-5' ? (
                 <p className="text-[10px] leading-relaxed text-gold">
                   claude-sonnet-5 no está en el plan Go. Para usarlo, cambia LLM_BASE_URL a
                   https://opencode.ai/inference/openai/v1 en el .env y reinicia la app.
                 </p>
               ) : null}
+
+              <p className="break-all text-[10px] leading-relaxed text-muted">
+                {modelList?.ok
+                  ? `${modelList.models.length} modelos desde ${modelList.baseUrl}`
+                  : `Lista local de respaldo (${modelList?.error ?? 'sin conexión'}).`}
+              </p>
               <p className="text-[10px] leading-relaxed text-muted">
-                Si el modelo no está disponible, actívalo en{' '}
+                deepseek-v4.1-flash es el más económico; claude-haiku-5.5 el más rápido del plan
+                Go. Si un modelo aparece bloqueado, actívalo en{' '}
                 <button
                   className="underline underline-offset-2 hover:no-underline"
                   onClick={() =>
@@ -799,7 +853,7 @@ export function SettingsPage(): React.JSX.Element {
                 >
                   OpenCode Console → Models
                 </button>{' '}
-                y verifica que tu workspace tenga créditos.
+                y revisa los créditos del workspace.
               </p>
             </div>
           </Row>

@@ -14,6 +14,14 @@ import { ChunkFileSink, WavSink } from './sinks'
 import { ensureDir } from '../lib/fs'
 import { log } from '../lib/logger'
 
+interface TapMetrics {
+  sumSquares: number
+  samples: number
+  peak: number
+  firstAt: number | null
+  lastAt: number | null
+}
+
 interface ActiveSession {
   id: string
   baseName: string
@@ -22,6 +30,7 @@ interface ActiveSession {
   partPath: string
   tmpDir: string
   startedAt: string
+  startedAtMs: number
   language: string
   hasMic: boolean
   hasSystem: boolean
@@ -30,6 +39,8 @@ interface ActiveSession {
   system: WavSink | null
   micWavPath: string | null
   systemWavPath: string | null
+  micTap: TapMetrics
+  systemTap: TapMetrics
   webmBytes: number
 }
 
@@ -86,6 +97,7 @@ export class RecordingSessionManager {
       partPath: allocated.partPath,
       tmpDir,
       startedAt: input.startedAt,
+      startedAtMs: Date.now(),
       language: input.language,
       hasMic: input.hasMic,
       hasSystem: input.hasSystem,
@@ -94,6 +106,8 @@ export class RecordingSessionManager {
       system,
       micWavPath,
       systemWavPath,
+      micTap: { sumSquares: 0, samples: 0, peak: 0, firstAt: null, lastAt: null },
+      systemTap: { sumSquares: 0, samples: 0, peak: 0, firstAt: null, lastAt: null },
       webmBytes: 0
     }
     this.sessions.set(id, session)
@@ -126,6 +140,11 @@ export class RecordingSessionManager {
     if (!session) return
     const sink = track === 'mic' ? session.mic : session.system
     if (!sink) return
+    const metrics = track === 'mic' ? session.micTap : session.systemTap
+    const now = Date.now()
+    metrics.firstAt ??= now
+    metrics.lastAt = now
+    measurePcm(chunk, metrics)
     sink.append(chunk)
   }
 
@@ -173,6 +192,47 @@ export class RecordingSessionManager {
       })
     }
 
+    const micRms = tapRms(session.micTap)
+    const systemRms = tapRms(session.systemTap)
+    const micSeconds = micResult?.seconds ?? 0
+    const systemSeconds = systemResult?.seconds ?? 0
+    const durationTolerance = Math.max(5, durationSeconds * 0.02)
+    const micDurationOk =
+      !micUsable || Math.abs(micSeconds - durationSeconds) <= durationTolerance
+    const systemDurationOk =
+      !systemUsable || Math.abs(systemSeconds - durationSeconds) <= durationTolerance
+    const micTapSilent = micUsable && input.micPeak > 0.002 && micRms < 0.0005
+    const systemTapSilent = systemUsable && input.systemPeak > 0.002 && systemRms < 0.0005
+
+    const captureIssues: string[] = []
+    if (micUsable && !micDurationOk) {
+      captureIssues.push(
+        `pista de micrófono incompleta (${Math.round(micSeconds)}s de ${durationSeconds}s)`
+      )
+    }
+    if (systemUsable && !systemDurationOk) {
+      captureIssues.push(
+        `pista del sistema incompleta (${Math.round(systemSeconds)}s de ${durationSeconds}s)`
+      )
+    }
+    if (micTapSilent) captureIssues.push('pista de micrófono sin señal útil')
+    if (systemTapSilent) captureIssues.push('pista del sistema sin señal útil')
+    const captureIssue = captureIssues.length > 0 ? captureIssues.join('; ') : null
+
+    if (captureIssue) {
+      log.warn('Captura por pista no fiable; se usará el audio completo', {
+        id: session.id,
+        captureIssue,
+        micRms,
+        systemRms,
+        micSeconds,
+        systemSeconds,
+        durationSeconds,
+        micPeak: input.micPeak,
+        systemPeak: input.systemPeak
+      })
+    }
+
     const job = this.jobs.enqueue({
       id: session.id,
       baseName: session.baseName,
@@ -182,8 +242,9 @@ export class RecordingSessionManager {
       systemWavPath: systemUsable ? session.systemWavPath : null,
       durationSeconds,
       language: session.language,
-      hasMic: Boolean(micUsable),
-      hasSystem: Boolean(systemUsable),
+      hasMic: Boolean(micUsable && !captureIssue),
+      hasSystem: Boolean(systemUsable && !captureIssue),
+      captureIssue,
       meetingDate: session.startedAt
     })
 
@@ -192,7 +253,18 @@ export class RecordingSessionManager {
       durationSeconds,
       webmBytes: webmResult.bytes,
       micSeconds: micResult?.seconds,
-      systemSeconds: systemResult?.seconds
+      systemSeconds: systemResult?.seconds,
+      micRms,
+      systemRms,
+      micFirstMs: session.micTap.firstAt ? session.micTap.firstAt - session.startedAtMs : null,
+      micLastMs: session.micTap.lastAt ? session.micTap.lastAt - session.startedAtMs : null,
+      systemFirstMs: session.systemTap.firstAt
+        ? session.systemTap.firstAt - session.startedAtMs
+        : null,
+      systemLastMs: session.systemTap.lastAt
+        ? session.systemTap.lastAt - session.startedAtMs
+        : null,
+      captureIssue
     })
     return job
   }
@@ -215,4 +287,20 @@ export class RecordingSessionManager {
       await this.cancel(id)
     }
   }
+}
+
+function measurePcm(chunk: ArrayBuffer, metrics: TapMetrics): void {
+  const samples = new Int16Array(chunk)
+  const step = samples.length > 4096 ? 4 : 1
+  for (let index = 0; index < samples.length; index += step) {
+    const value = samples[index] / 32768
+    metrics.sumSquares += value * value
+    metrics.samples += 1
+    const absolute = Math.abs(value)
+    if (absolute > metrics.peak) metrics.peak = absolute
+  }
+}
+
+function tapRms(metrics: TapMetrics): number {
+  return metrics.samples > 0 ? Math.sqrt(metrics.sumSquares / metrics.samples) : 0
 }

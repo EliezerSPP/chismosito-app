@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { buildWhisperArgs } from './args'
 import { log } from '../lib/logger'
 
 export interface RawSegment {
@@ -18,6 +19,7 @@ export interface WhisperRunOptions {
   language: string
   device: 'cpu' | 'cuda'
   threads: number
+  vadModelPath?: string | null
   signal?: AbortSignal
   onProgress?: (percent: number) => void
 }
@@ -63,21 +65,20 @@ export async function runWhisper(options: WhisperRunOptions): Promise<RawSegment
 
   const workDir = await mkdtemp(join(tmpdir(), 'chismosito-whisper-'))
   const outputBase = join(workDir, 'result')
-  const args = [
-    '-m',
-    options.modelPath,
-    '-f',
-    options.wavPath,
-    '-l',
-    options.language || 'es',
-    '-t',
-    String(Math.max(1, options.threads)),
-    '-oj',
-    '-of',
+  const vadModelPath =
+    options.vadModelPath && existsSync(options.vadModelPath) ? options.vadModelPath : null
+  if (!vadModelPath) {
+    log.warn('Modelo VAD de Silero no encontrado; se transcribe sin detección de voz')
+  }
+  const args = buildWhisperArgs({
+    modelPath: options.modelPath,
+    wavPath: options.wavPath,
+    language: options.language,
+    device: options.device,
+    threads: options.threads,
     outputBase,
-    '-pp'
-  ]
-  if (options.device === 'cpu') args.push('-ng')
+    vadModelPath
+  })
 
   log.info('whisper.cpp', args.join(' '))
 

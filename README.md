@@ -54,6 +54,8 @@ El instalador queda en `dist/`. No está firmado, así que Windows SmartScreen p
 
 La **API key** se configura dentro de la app: **Ajustes → Resumen con LLM → API key de OpenCode**. Se guarda cifrada con DPAPI (Windows) en `%APPDATA%\chismosito\secrets.json`, nunca se envía al renderer y se aplica al instante (sin reiniciar). La misma key se usa para el resumen, el chat y Jev. Puedes quitarla desde el mismo panel.
 
+El modelo se elige en **Ajustes → Resumen con LLM → Modelo**: la app pide `GET /models` al endpoint configurado con tu API key y arma la lista (DeepSeek V4.1 Flash, Claude Haiku 5.5, Kimi, GLM, Qwen, MiMo…). Si la API no responde, cae en una lista local de respaldo y lo indica bajo el selector. También puedes escribir un ID a mano con «Otro modelo».
+
 El endpoint y el modelo por defecto se siguen leyendo del `.env` (copia `.env.example` a `.env`). El default es OpenCode Go (`/go/openai/v1`), que pide el ID de modelo sin prefijo:
 
 ```dotenv
@@ -150,7 +152,7 @@ WHISPER_MODEL_PATH=      # opcional: ruta a un .bin ggml propio (tiene prioridad
 
 ## Primer uso
 
-1. **Modelo de transcripción:** elige uno en **Ajustes → Transcripción**. La app detecta tu GPU/RAM, marca el **Recomendado** y ofrece el catálogo completo de whisper.cpp (tiny → large-v3, con sus cuantizaciones f16/q8_0/q5_0/q5_1). Se descarga solo, con reanudación y verificación sha256, y se guarda en `%APPDATA%\chismosito\models`. Los modelos marcados **EN** solo transcriben inglés; para español usa los multilingües (los primeros de la lista).
+1. **Modelo de transcripción:** elige uno en **Ajustes → Transcripción**. La app detecta tu GPU/RAM, marca el **Recomendado** y ofrece el catálogo completo de whisper.cpp (tiny → large-v3, con sus cuantizaciones f16/q8_0/q5_0/q5_1). Se descarga solo, con reanudación y verificación sha256, y se guarda en `%APPDATA%\chismosito\models`. Los modelos marcados **EN** solo transcriben inglés; para español usa los multilingües (los primeros de la lista). La app incluye el modelo Silero VAD (~885 KB) para ignorar silencios y evitar alucinaciones.
 2. **Micrófono:** autoriza el acceso. Si Windows lo bloquea, abre Configuración › Privacidad y seguridad › Micrófono.
 3. **Audio del sistema:** Windows 11 lo captura mediante loopback de Chromium; no necesitas instalar controladores. En algunas configuraciones Windows muestra un indicador de captura de pantalla.
 4. **GPU opcional:** si tienes NVIDIA, descarga el pack CUDA desde Ajustes (~650 MB; ~1.4 GB en disco). En una RTX 4060, la transcripción es aproximadamente 5 veces más rápida que en CPU. Si el pack falla, la app usa CPU automáticamente.
@@ -178,7 +180,7 @@ WHISPER_MODEL_PATH=      # opcional: ruta a un .bin ggml propio (tiene prioridad
 
 - **Grabar:** elige micrófono y/o audio del sistema y pulsa el botón. También puedes usar el atajo global (`Ctrl+Shift+R` por defecto) o el menú de la bandeja.
 - **Detener:** al detener se guarda el WebM/Opus y comienza el procesamiento en segundo plano. Puedes seguir usando la app o cerrarla a la bandeja.
-- **Procesamiento:** primero transcribe tu pista (`Yo`) y la del sistema (`Otros`) con whisper.cpp; luego fusiona los segmentos con timestamps y llama al LLM para el resumen, las decisiones y las acciones.
+- **Procesamiento:** primero transcribe tu pista (`Yo`) y la del sistema (`Otros`) con whisper.cpp y Silero VAD; luego fusiona los segmentos con timestamps y llama al LLM para el resumen, las decisiones y las acciones. Si una pista quedó incompleta o sin señal, transcribe el audio completo del WebM y lo etiqueta como `Mixto`.
 - **Nota:** se escribe en `MeetingNotes/YYYY-MM-DD-HH-MM.md`, con el audio `YYYY-MM-DD-HH-MM.webm` al lado.
 - **Historial:** la biblioteca permite buscar por título, resumen, carpeta, etiqueta o **transcripción**, agrupa por fecha y muestra el estado de cada nota.
 - **Carpetas y etiquetas:** «Editar» permite cambiar título, etiquetas y carpeta. Al mover una nota se mueve también su audio. Las notas sin carpeta quedan en la raíz de `MeetingNotes/`.
@@ -190,6 +192,7 @@ WHISPER_MODEL_PATH=      # opcional: ruta a un .bin ggml propio (tiene prioridad
 - **Filtros del chat global:** limita por fecha (hoy, esta semana, este mes o un rango) y por carpeta. Los filtros se guardan con la conversación y se aplican antes de buscar.
 - **Respaldo:** si Drive está conectado, puedes respaldar una nota desde su vista o todo desde Ajustes. El respaldo automático se activa al terminar el procesamiento. Los chats se respaldan en `Conversaciones/` si activas **Respaldar conversaciones**.
 - **Regenerar resumen:** si el LLM falló, aparece un botón para reintentar sin volver a transcribir.
+- **Reprocesar audio:** vuelve a transcribir el WebM original de principio a fin (útil si una nota quedó con una transcripción incompleta). Antes de reemplazar la nota guarda una copia `*.md.bak`.
 - **Bandeja:** cerrar la ventana la oculta; la grabación y el procesamiento continúan. «Salir» desde la bandeja pide confirmación si hay trabajo en curso.
 
 ### Ajustes que conviene revisar
@@ -276,7 +279,7 @@ src/
   renderer/    React + Tailwind
   shared/      tipos y constantes compartidas
 resources/
-  whisper/     whisper-cli.exe + DLLs (CPU)
+  whisper/     whisper-cli.exe + DLLs (CPU), modelo Silero VAD
   tray/        iconos de bandeja
   icon.png
 tests/         pruebas unitarias (Vitest)
@@ -291,7 +294,7 @@ npm test
 npm run typecheck
 ```
 
-Las pruebas cubren la normalización de la URL del LLM, la fusión/deduplicación de hablantes, el formato de las notas, la escritura de WAV, el parseo de resumen/acciones, la recuperación y filtros del chat, el almacén de conversaciones, la clasificación de carpetas con Jev y la gestión de carpetas.
+Las pruebas cubren la normalización de la URL del LLM, la fusión/deduplicación de hablantes, el filtro de bucles de whisper, los argumentos de whisper-cli (VAD y anti-bucle), el formato de las notas, la escritura de WAV, el parseo de resumen/acciones, la recuperación y filtros del chat, el almacén de conversaciones, la clasificación de carpetas con Jev y la gestión de carpetas.
 
 ---
 
@@ -308,9 +311,12 @@ Las pruebas cubren la normalización de la URL del LLM, la fusión/deduplicació
 - Renombrar una carpeta solo cambia el último segmento; no la mueve a otro padre. Eliminar una carpeta mueve sus notas a Sin clasificar, nunca las borra.
 - Con bocinas, el micrófono puede captar el audio del sistema. La app intenta eliminar la copia duplicada, pero se recomienda usar audífonos.
 - Si cambias el dispositivo de salida a mitad de una reunión, puede ser necesario reiniciar la captura.
+- Si la captura por pista falla o queda incompleta, la transcripción se genera desde el audio completo y los fragmentos se etiquetan como `Mixto`, sin separación de hablantes.
 
 ---
 
 ## Licencia
 
 MIT. whisper.cpp se distribuye bajo licencia MIT; el modelo de Whisper también es MIT. Consulta los avisos en `resources/whisper/`.
+
+FFmpeg se incluye mediante `ffmpeg-static` y se distribuye bajo GPL-3.0-or-later. La app lo ejecuta como proceso separado para decodificar WebM/Opus a WAV al reprocesar una nota. El binario y sus licencias quedan en `node_modules/ffmpeg-static/` (y en `app.asar.unpacked` al instalar).

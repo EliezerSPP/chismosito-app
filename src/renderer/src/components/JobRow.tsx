@@ -6,8 +6,10 @@ import { cn } from '../lib/cn'
 
 const STAGE_LABEL: Record<Job['stage'], string> = {
   queued: 'En cola',
+  preparing_audio: 'Preparando el audio',
   transcribing_mic: 'Transcribiendo tu voz',
   transcribing_system: 'Transcribiendo a los demás',
+  transcribing_mix: 'Transcribiendo el audio completo',
   merging: 'Uniendo la transcripción',
   summarizing: 'Generando resumen',
   finalizing: 'Guardando nota',

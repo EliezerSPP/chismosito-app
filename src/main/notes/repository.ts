@@ -352,6 +352,8 @@ export class NoteRepository {
     const files = await this.walkFiles(absolute)
     const unexpected = files.filter((file) => {
       if (file.toLowerCase().endsWith('.md')) return false
+      // Respaldos manuales creados por "Reprocesar audio".
+      if (file.toLowerCase().endsWith('.md.bak')) return false
       return !expectedAudio.has(file.toLowerCase())
     })
     if (unexpected.length > 0) {

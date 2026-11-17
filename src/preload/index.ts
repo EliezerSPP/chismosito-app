@@ -42,6 +42,7 @@ const api: ChismositoApi = {
       ipcRenderer.invoke(IPC.notesClearFolderSuggestion, path),
     reveal: (path) => ipcRenderer.invoke(IPC.notesReveal, path),
     resummarize: (path) => ipcRenderer.invoke(IPC.notesResummarize, path),
+    reprocess: (path) => ipcRenderer.invoke(IPC.notesReprocess, path),
     search: (query) => ipcRenderer.invoke(IPC.notesSearch, query)
   },
   folders: {
@@ -60,6 +61,7 @@ const api: ChismositoApi = {
   },
   llm: {
     test: () => ipcRenderer.invoke(IPC.llmTest),
+    models: () => ipcRenderer.invoke(IPC.llmModels),
     setApiKey: (key) => ipcRenderer.invoke(IPC.llmKeySet, key),
     clearApiKey: () => ipcRenderer.invoke(IPC.llmKeyClear),
     scrubEnvKey: () => ipcRenderer.invoke(IPC.llmEnvKeyScrub)

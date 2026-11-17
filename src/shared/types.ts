@@ -10,8 +10,10 @@ export type NoteStatus =
 
 export type JobStage =
   | 'queued'
+  | 'preparing_audio'
   | 'transcribing_mic'
   | 'transcribing_system'
+  | 'transcribing_mix'
   | 'merging'
   | 'summarizing'
   | 'finalizing'
@@ -48,6 +50,21 @@ export interface AppSettings {
 }
 
 export type LlmKeyState = 'ok' | 'missing' | 'unreadable'
+
+export interface LlmModelOption {
+  id: string
+  label: string
+}
+
+export interface LlmModelList {
+  /** true si la lista vino de /models; false si es la de respaldo. */
+  ok: boolean
+  source: 'api' | 'fallback'
+  models: LlmModelOption[]
+  error: string | null
+  /** Base URL consultada (para mostrar de dónde salió la lista). */
+  baseUrl: string
+}
 
 export interface LlmKeyStatus {
   configured: boolean
@@ -266,6 +283,10 @@ export interface Job {
   progress: number
   message: string
   error: string | null
+  /** Motivo por el que la captura por pista no es fiable; si existe, se usa el audio completo. */
+  captureIssue?: string | null
+  /** Fuerza a volver a transcribir desde el audio de la nota, ignorando la transcripción previa. */
+  reprocessAudio?: boolean
   createdAt: string
   updatedAt: string
   transcriptChars: number
@@ -447,6 +468,7 @@ export interface ChismositoApi {
     clearFolderSuggestion(path: string): Promise<NoteDetail>
     reveal(path: string): Promise<void>
     resummarize(path: string): Promise<void>
+    reprocess(path: string): Promise<void>
     search(query: string): Promise<NoteMeta[]>
   }
   folders: {
@@ -465,6 +487,7 @@ export interface ChismositoApi {
   }
   llm: {
     test(): Promise<LlmTestResult>
+    models(): Promise<LlmModelList>
     setApiKey(key: string): Promise<LlmKeyStatus>
     clearApiKey(): Promise<LlmKeyStatus>
     scrubEnvKey(): Promise<LlmKeyStatus>
