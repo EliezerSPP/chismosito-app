@@ -6,6 +6,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   CloudUpload,
+  Copy,
   ExternalLink,
   FileAudio,
   FileText,
@@ -29,6 +30,7 @@ import { EditNoteModal } from '../components/EditNoteModal'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { ProgressBar } from '../components/ProgressBar'
 import { noteDateLabel, formatDuration } from '../lib/format'
+import { decodeAudioToPcm } from '../lib/audio-decode'
 import { errorMessage } from '../lib/errors'
 import { cn } from '../lib/cn'
 
@@ -51,6 +53,8 @@ export function NotePage(): React.JSX.Element {
   const [editOpen, setEditOpen] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [confirmRegenerate, setConfirmRegenerate] = useState(false)
+  const [confirmRetranscribe, setConfirmRetranscribe] = useState(false)
+  const [busyRetranscribe, setBusyRetranscribe] = useState(false)
   const [busyBackup, setBusyBackup] = useState(false)
   const [busyRegenerate, setBusyRegenerate] = useState(false)
   const [busySuggestion, setBusySuggestion] = useState(false)
@@ -238,6 +242,45 @@ export function NotePage(): React.JSX.Element {
     }
   }
 
+  const duplicate = async (): Promise<void> => {
+    try {
+      const copy = await window.chismosito.notes.duplicate(note!.path)
+      pushToast('success', 'Nota duplicada')
+      navigate(`/note?path=${encodeURIComponent(copy.path)}`)
+    } catch (error) {
+      pushToast('error', errorMessage(error))
+    }
+  }
+
+  const retranscribe = async (): Promise<void> => {
+    if (!audioSrc) {
+      pushToast('error', 'La nota no tiene audio para re-transcribir')
+      return
+    }
+    setBusyRetranscribe(true)
+    try {
+      pushToast('info', 'Preparando el audio…')
+      const pcm = await decodeAudioToPcm(audioSrc)
+      const { id } = await window.chismosito.notes.retranscribeBegin(note!.path, pcm.length)
+      try {
+        const chunkSize = 1_000_000
+        for (let offset = 0; offset < pcm.length; offset += chunkSize) {
+          const chunk = pcm.slice(offset, offset + chunkSize)
+          await window.chismosito.notes.retranscribeChunk(id, chunk.buffer as ArrayBuffer)
+        }
+        const job = await window.chismosito.notes.retranscribeFinish(id)
+        pushToast('success', `Re-transcripción en cola (${job.baseName}).`)
+      } catch (error) {
+        await window.chismosito.notes.retranscribeCancel(id).catch(() => undefined)
+        throw error
+      }
+    } catch (error) {
+      pushToast('error', errorMessage(error))
+    } finally {
+      setBusyRetranscribe(false)
+    }
+  }
+
   const remove = async (): Promise<void> => {
     try {
       await window.chismosito.notes.remove(note.path)
@@ -264,6 +307,13 @@ export function NotePage(): React.JSX.Element {
             title={processing ? 'Espera a que termine el procesamiento' : 'Editar título, etiquetas o carpeta'}
           >
             <Pencil className="size-3.5" /> Editar
+          </button>
+          <button
+            onClick={() => void duplicate()}
+            className="btn-secondary h-8 px-3 text-[11px]"
+            title="Crear una copia de la nota y su audio"
+          >
+            <Copy className="size-3.5" /> Duplicar
           </button>
           {drive?.connected ? (
             <button
@@ -528,6 +578,22 @@ export function NotePage(): React.JSX.Element {
                   {note.transcript.length} fragmentos · haz clic en un tiempo para escuchar ese momento
                 </p>
               </div>
+              <div className="flex flex-wrap items-center justify-end gap-1">
+              {note.audio ? (
+                <button
+                  onClick={() => setConfirmRetranscribe(true)}
+                  disabled={busyRetranscribe || jobActive}
+                  className="btn-ghost h-8 px-2 text-[11px]"
+                  title="Volver a transcribir el audio con el modelo activo"
+                >
+                  {busyRetranscribe ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    <RefreshCw className="size-3.5" />
+                  )}
+                  Regenerar transcripción
+                </button>
+              ) : null}
               {note.transcript.length > 0 ? (
                 <button
                   onClick={() => setConfirmRegenerate(true)}
@@ -543,6 +609,7 @@ export function NotePage(): React.JSX.Element {
                   Regenerar resumen
                 </button>
               ) : null}
+              </div>
             </div>
 
             {note.status === 'processing' && note.transcript.length === 0 ? (
@@ -596,6 +663,14 @@ export function NotePage(): React.JSX.Element {
         onConfirm={() => void remove()}
       />
 
+      <ConfirmDialog
+        open={confirmRetranscribe}
+        title="Regenerar transcripción"
+        description="Se vuelve a transcribir el audio con el modelo activo y luego se regenera el resumen. La transcripción actual se reemplaza; el audio no se toca. Puede tardar varios minutos en reuniones largas."
+        confirmLabel="Re-transcribir"
+        onClose={() => setConfirmRetranscribe(false)}
+        onConfirm={() => void retranscribe()}
+      />
       <ConfirmDialog
         open={confirmRegenerate}
         title="Regenerar resumen"

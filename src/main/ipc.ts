@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { existsSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
-import { isAbsolute, resolve } from 'node:path'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
 import type {
   AppEvent,
   AppInfo,
@@ -16,6 +16,7 @@ import type {
   DriveBackupSummary,
   DriveStatus,
   EnvStatus,
+  Job,
   LlmKeyStatus,
   LlmModelList,
   LlmTestResult,
@@ -39,6 +40,7 @@ import type { LlmClient } from './llm/summarizer'
 import type { JevClient } from './llm/jev'
 import type { DriveManager } from './drive/manager'
 import type { ChatAssistant } from './chat/assistant'
+import { retranscribeSessions } from './notes/retranscribe'
 import { getEnv } from './env'
 import { whisperModel } from '@shared/whisper-models'
 import { log } from './lib/logger'
@@ -291,6 +293,63 @@ export function registerIpc(context: MainContext): void {
     })
     toast('info', 'Regenerando el resumen…')
   })
+
+  ipcMain.handle(IPC.notesDuplicate, async (_event, path: string): Promise<NoteDetail> => {
+    const copy = await context.notes.duplicate(String(path))
+    context.broadcast({ type: 'notes-changed' })
+    toast('success', 'Nota duplicada')
+    return copy
+  })
+
+  ipcMain.handle(
+    IPC.notesRetranscribeBegin,
+    async (_event, path: string, samples: number): Promise<{ id: string }> => {
+      if (context.sessions.isRecording()) {
+        throw new Error('Detén la grabación antes de re-transcribir')
+      }
+      const note = await context.notes.get(String(path))
+      if (!note) throw new Error('La nota no existe')
+      if (!note.audio) throw new Error('La nota no tiene audio guardado')
+      if (!existsSync(join(dirname(note.path), note.audio))) {
+        throw new Error('No se encontró el archivo de audio de la nota')
+      }
+      return retranscribeSessions().begin(note.path, Number(samples))
+    }
+  )
+  ipcMain.handle(
+    IPC.notesRetranscribeChunk,
+    (_event, id: string, chunk: ArrayBuffer | Uint8Array): void => {
+      retranscribeSessions().append(String(id), normalizeChunk(chunk))
+    }
+  )
+  ipcMain.handle(
+    IPC.notesRetranscribeFinish,
+    async (_event, id: string): Promise<Job> => {
+      const { wavPath, notePath } = retranscribeSessions().finish(String(id))
+      const note = await context.notes.get(notePath)
+      if (!note) throw new Error('La nota no existe')
+      const whisperStatus = await context.whisper.status()
+      const job = context.jobs.enqueue({
+        id: randomUUID(),
+        baseName: note.baseName,
+        notePath: note.path,
+        audioPath: note.path,
+        micWavPath: null,
+        systemWavPath: null,
+        transcribeAudioPath: wavPath,
+        durationSeconds: note.durationSeconds,
+        language: note.language,
+        hasMic: false,
+        hasSystem: false,
+        meetingDate: note.date || new Date().toISOString()
+      })
+      toast('info', `Regenerando transcripción con ${whisperStatus.model.name}…`)
+      return job
+    }
+  )
+  ipcMain.handle(IPC.notesRetranscribeCancel, (_event, id: string): Promise<void> =>
+    retranscribeSessions().cancel(String(id))
+  )
 
   ipcMain.handle(IPC.foldersCreate, async (_event, path: string) => {
     const result = await context.notes.createFolder(String(path))

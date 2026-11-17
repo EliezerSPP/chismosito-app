@@ -715,6 +715,48 @@ export class NoteRepository {
     return updated
   }
 
+  /**
+   * Copia la nota y su audio junto al original, con título «(copia)» y
+   * timestamps nuevos. El original no se toca.
+   */
+  async duplicate(notePath: string): Promise<NoteDetail> {
+    const absolute = this.resolveNotePath(notePath)
+    const parsed = await this.readParsed(absolute)
+    const directory = dirname(absolute)
+    const base = basename(absolute, '.md')
+    const audioField = stringField(parsed.data, 'audio')
+    const sourceAudio = audioField ? join(directory, audioField) : join(directory, `${base}.webm`)
+    const hasAudio = existsSync(sourceAudio)
+    const audioExt = hasAudio ? extname(sourceAudio) : ''
+
+    const collision = (candidate: string): boolean => {
+      const stem = basename(candidate, '.md')
+      return existsSync(candidate) || (hasAudio && existsSync(join(directory, `${stem}${audioExt}`)))
+    }
+    const targetMd = uniquePath(join(directory, `${base}-copia.md`), collision)
+    const targetBase = basename(targetMd, '.md')
+    const targetAudioName = hasAudio ? `${targetBase}${audioExt}` : null
+
+    if (targetAudioName) {
+      await copyFile(sourceAudio, join(directory, targetAudioName))
+    }
+
+    const now = new Date().toISOString()
+    const data: Record<string, unknown> = { ...parsed.data }
+    data.title = `${String(data.title ?? base).trim() || base} (copia)`
+    if (targetAudioName) data.audio = targetAudioName
+    data.created_at = now
+    data.updated_at = now
+
+    const content = replaceTitle(parsed.content, String(data.title), stringField(data, 'date'))
+    writeAtomic(targetMd, composeWith(data, content))
+    this.cache.delete(targetMd)
+    const created = await this.get(targetMd)
+    if (!created) throw new Error('No se pudo releer la copia')
+    log.info(`Nota duplicada: ${basename(targetMd)}`)
+    return created
+  }
+
   async remove(notePath: string): Promise<void> {
     const absolute = this.resolveNotePath(notePath)
     if (!existsSync(absolute)) return

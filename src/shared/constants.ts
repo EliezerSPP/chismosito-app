@@ -30,6 +30,11 @@ export const IPC = {
   notesClearFolderSuggestion: 'notes:clear-folder-suggestion',
   notesReveal: 'notes:reveal',
   notesResummarize: 'notes:resummarize',
+  notesRetranscribeBegin: 'notes:retranscribe-begin',
+  notesRetranscribeChunk: 'notes:retranscribe-chunk',
+  notesRetranscribeFinish: 'notes:retranscribe-finish',
+  notesRetranscribeCancel: 'notes:retranscribe-cancel',
+  notesDuplicate: 'notes:duplicate',
   notesSearch: 'notes:search',
 
   foldersCreate: 'folders:create',

@@ -192,6 +192,10 @@ WHISPER_MODEL_PATH=      # opcional: ruta a un .bin ggml propio (tiene prioridad
 - **Filtros del chat global:** limita por fecha (hoy, esta semana, este mes o un rango) y por carpeta. Los filtros se guardan con la conversación y se aplican antes de buscar.
 - **Respaldo:** si Drive está conectado, puedes respaldar una nota desde su vista o todo desde Ajustes. El respaldo automático se activa al terminar el procesamiento. Los chats se respaldan en `Conversaciones/` si activas **Respaldar conversaciones**.
 - **Regenerar resumen:** si el LLM falló, aparece un botón para reintentar sin volver a transcribir.
+
+- **Regenerar transcripción:** vuelve a transcribir el audio guardado con el modelo activo y después regenera el resumen. Sirve para aprovechar un modelo mejor sin volver a grabar. El audio se decodifica en la app (webm/opus → WAV 16 kHz) y los hablantes se reasignan usando los tiempos de la transcripción anterior, porque el audio guardado ya viene mezclado.
+
+- **Duplicar:** copia la nota y su audio junto al original con el título «(copia)». Sirve para probar otro modelo o reescribir el resumen sin perder la versión original; el original no se toca.
 - **Bandeja:** cerrar la ventana la oculta; la grabación y el procesamiento continúan. «Salir» desde la bandeja pide confirmación si hay trabajo en curso.
 
 ### Ajustes que conviene revisar

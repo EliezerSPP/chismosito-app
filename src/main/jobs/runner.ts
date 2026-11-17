@@ -10,6 +10,7 @@ import type { NoteRepository } from '../notes/repository'
 import type { WhisperManager } from '../whisper/manager'
 import { runWhisper, type RawSegment } from '../whisper/runner'
 import { mergeSpeakers, renderTranscript } from '../whisper/merge'
+import { assignSpeakers, parseSpeakerTimeline } from '../whisper/relabel'
 import type { LlmClient } from '../llm/summarizer'
 import type { JevClient, FolderSuggestion } from '../llm/jev'
 import { ensureDir, writeAtomic } from '../lib/fs'
@@ -22,6 +23,7 @@ export interface NewJobInput {
   audioPath: string
   micWavPath: string | null
   systemWavPath: string | null
+  transcribeAudioPath?: string | null
   durationSeconds: number
   language: string
   hasMic: boolean
@@ -158,6 +160,7 @@ export class JobRunner {
       audioPath: input.audioPath,
       micWavPath: input.micWavPath,
       systemWavPath: input.systemWavPath,
+      transcribeAudioPath: input.transcribeAudioPath ?? null,
       durationSeconds: input.durationSeconds,
       language: input.language,
       hasMic: input.hasMic,
@@ -280,7 +283,13 @@ export class JobRunner {
         job.micWavPath && existsSync(job.micWavPath) ? job.micWavPath : null
       const availableSystem =
         job.systemWavPath && existsSync(job.systemWavPath) ? job.systemWavPath : null
-      const summaryOnly = Boolean(existingTranscript && !availableMic && !availableSystem)
+      const retranscribe =
+        job.transcribeAudioPath && existsSync(job.transcribeAudioPath)
+          ? job.transcribeAudioPath
+          : null
+      const summaryOnly = Boolean(
+        existingTranscript && !availableMic && !availableSystem && !retranscribe
+      )
 
       let transcriptText = ''
 
@@ -296,11 +305,16 @@ export class JobRunner {
         let micSegments: RawSegment[] = []
         let systemSegments: RawSegment[] = []
 
-        const transcribe = async (kind: 'mic' | 'system'): Promise<RawSegment[]> => {
-          const wav = kind === 'mic' ? job.micWavPath : job.systemWavPath
+        const transcribeFile = async (
+          wav: string | null,
+          kind: 'mic' | 'system' | 'mixed'
+        ): Promise<RawSegment[]> => {
           if (!wav || !existsSync(wav)) return []
-          const stage: JobStage = kind === 'mic' ? 'transcribing_mic' : 'transcribing_system'
-          this.update(job, { stage, progress: kind === 'mic' ? 8 : 34, message: STAGE_MESSAGES[stage] })
+          const stage: JobStage =
+            kind === 'system' ? 'transcribing_system' : 'transcribing_mic'
+          const stageMessage =
+            kind === 'mixed' ? 'Re-transcribiendo con el modelo activo' : STAGE_MESSAGES[stage]
+          this.update(job, { stage, progress: kind === 'mic' ? 8 : 34, message: stageMessage })
 
           const attempt = async (device: 'cpu' | 'cuda'): Promise<RawSegment[]> =>
             runWhisper({
@@ -319,7 +333,7 @@ export class JobRunner {
                 const span = 26
                 this.update(job, {
                   progress: Math.min(60, Math.round(base + (percent / 100) * span)),
-                  message: `${STAGE_MESSAGES[stage]} · ${percent}%`
+                  message: `${stageMessage} · ${percent}%`
                 })
               }
             })
@@ -340,15 +354,24 @@ export class JobRunner {
           }
         }
 
-        micSegments = await transcribe('mic')
-        if (signal?.aborted) throw new Error('Procesamiento cancelado')
-        systemSegments = await transcribe('system')
-        if (signal?.aborted) throw new Error('Procesamiento cancelado')
+        if (retranscribe) {
+          // Audio mezclado: una sola pista, y se recuperan los hablantes del
+          // timeline de la transcripción anterior.
+          const segments = await transcribeFile(retranscribe, 'mixed')
+          if (signal?.aborted) throw new Error('Procesamiento cancelado')
+          const timeline = parseSpeakerTimeline(existingTranscript)
+          transcriptText = renderTranscript(assignSpeakers(segments, timeline)).markdown
+        } else {
+          micSegments = await transcribeFile(job.micWavPath, 'mic')
+          if (signal?.aborted) throw new Error('Procesamiento cancelado')
+          systemSegments = await transcribeFile(job.systemWavPath, 'system')
+          if (signal?.aborted) throw new Error('Procesamiento cancelado')
 
-        this.update(job, { stage: 'merging', progress: 62, message: STAGE_MESSAGES.merging })
-        const merged = mergeSpeakers(micSegments, systemSegments)
-        const rendered = renderTranscript(merged)
-        transcriptText = rendered.markdown
+          this.update(job, { stage: 'merging', progress: 62, message: STAGE_MESSAGES.merging })
+          const merged = mergeSpeakers(micSegments, systemSegments)
+          const rendered = renderTranscript(merged)
+          transcriptText = rendered.markdown
+        }
 
         if (!transcriptText.trim()) {
           throw new Error(
@@ -504,6 +527,10 @@ export class JobRunner {
   }
 
   private async cleanupTemp(job: Job): Promise<void> {
+    if (job.transcribeAudioPath) {
+      await rm(job.transcribeAudioPath, { force: true })
+      await rm(dirname(job.transcribeAudioPath), { recursive: true, force: true })
+    }
     for (const path of [job.micWavPath, job.systemWavPath]) {
       if (!path) continue
       await rm(path, { force: true })

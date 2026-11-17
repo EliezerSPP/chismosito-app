@@ -272,6 +272,8 @@ export interface Job {
   audioPath: string
   micWavPath: string | null
   systemWavPath: string | null
+  /** WAV temporal de una re-transcripción (audio ya mezclado, una sola pista). */
+  transcribeAudioPath?: string | null
   durationSeconds: number
   language: string
   hasMic: boolean
@@ -462,6 +464,11 @@ export interface ChismositoApi {
     clearFolderSuggestion(path: string): Promise<NoteDetail>
     reveal(path: string): Promise<void>
     resummarize(path: string): Promise<void>
+    duplicate(path: string): Promise<NoteDetail>
+    retranscribeBegin(path: string, samples: number): Promise<{ id: string }>
+    retranscribeChunk(id: string, chunk: ArrayBuffer): Promise<void>
+    retranscribeFinish(id: string): Promise<Job>
+    retranscribeCancel(id: string): Promise<void>
     search(query: string): Promise<NoteMeta[]>
   }
   folders: {
