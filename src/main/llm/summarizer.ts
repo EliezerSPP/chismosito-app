@@ -35,6 +35,7 @@ export interface SummaryContext {
 const SYSTEM_PROMPT = `Eres un asistente experto en documentar reuniones. Recibes una transcripción con hablantes etiquetados:
 - "Yo" es el usuario local que grabó la reunión.
 - "Otros" son los demás participantes.
+- "Mixto" indica que el audio se transcribió sin separar hablantes; no es una persona.
 
 Devuelve EXCLUSIVAMENTE un objeto JSON válido, sin markdown, sin explicaciones y sin texto adicional.
 
@@ -348,7 +349,7 @@ export class LlmClient {
     const config = clientConfig(this.settings, this.secrets)
     const partials: Array<z.infer<typeof partialSchema>> = []
 
-    if (transcript.length > 60_000) {
+    if (transcript.length > 30_000) {
       const chunks = chunkTranscript(transcript)
       for (let i = 0; i < chunks.length; i += 1) {
         if (signal?.aborted) throw new Error('Resumen cancelado')
@@ -366,7 +367,7 @@ export class LlmClient {
       : buildMessages(transcript, context)
 
     if (signal?.aborted) throw new Error('Resumen cancelado')
-    const raw = await this.requestJson(messages, 4500, sessionId)
+    const raw = await this.requestJson(messages, 6000, sessionId)
     const normalized = normalizeResult(raw, context)
 
     if (partials.length > 0 && normalized.summary.summary_bullets.length < 3) {

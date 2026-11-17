@@ -1,6 +1,6 @@
 import type { RawSegment } from './runner'
 
-export type Speaker = 'Yo' | 'Otros'
+export type Speaker = 'Yo' | 'Otros' | 'Mixto'
 
 export interface SpeakerSegment {
   speaker: Speaker
@@ -20,6 +20,44 @@ const NOISE = [
   /^\.+$/
 ]
 
+/**
+ * Detecta los bucles típicos de whisper cuando recibe silencio o audio
+ * corrupto: "Pero cuando... Pero cuando..." o "No, no, no, no...".
+ */
+export function isRepetitiveText(text: string): boolean {
+  const tokens = text
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter(Boolean)
+
+  if (tokens.length < 8) return false
+
+  const uniqueRatio = new Set(tokens).size / tokens.length
+  if (tokens.length >= 10 && uniqueRatio < 0.3) return true
+
+  for (let size = 2; size <= 4; size += 1) {
+    let run = 1
+    for (let i = size; i + size <= tokens.length; i += 1) {
+      const previous = tokens.slice(i - size, i).join(' ')
+      const current = tokens.slice(i, i + size).join(' ')
+      if (previous === current) {
+        run += 1
+        if (run >= 4) return true
+        i += size - 1
+      } else {
+        run = 1
+      }
+    }
+  }
+
+  return false
+}
+
 export function cleanSegmentText(text: string): string {
   const cleaned = text
     .replace(/^\s*[-–—]\s*/, '')
@@ -28,6 +66,7 @@ export function cleanSegmentText(text: string): string {
   if (!cleaned) return ''
   if (!/[\p{L}\p{N}]/u.test(cleaned)) return ''
   if (NOISE.some((pattern) => pattern.test(cleaned))) return ''
+  if (isRepetitiveText(cleaned)) return ''
   return cleaned
 }
 
@@ -124,8 +163,8 @@ function removeEchoedMicSegments(
     if (comparisonTokens(segment.text).size < 3) return true
     const tokens = comparisonTokens(segment.text)
     return !system.some((candidate, index) => {
-      if (overlapRatio(segment, candidate) < 0.4) return false
-      return textSimilarity(tokens, systemTokens[index]) >= 0.68
+      if (overlapRatio(segment, candidate) < 0.35) return false
+      return textSimilarity(tokens, systemTokens[index]) >= 0.55
     })
   })
 }

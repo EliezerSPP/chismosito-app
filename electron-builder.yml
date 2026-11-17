@@ -28,3 +28,4 @@ nsis:
   createStartMenuShortcut: true
 asarUnpack:
   - resources/**
+  - node_modules/ffmpeg-static/**

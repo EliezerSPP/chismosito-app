@@ -12,7 +12,8 @@ import {
   CUDA_ZIP_NAME,
   MODEL_EXPECTED_BYTES,
   MODEL_FILE_NAME,
-  MODEL_URL
+  MODEL_URL,
+  VAD_FILE_NAME
 } from '@shared/constants'
 import type {
   DownloadKind,
@@ -49,14 +50,27 @@ export class WhisperManager {
     this.listener?.(progress)
   }
 
-  private resourcesWhisperDir(): string {
+  private whisperRoot(): string {
     return app.isPackaged
-      ? join(process.resourcesPath, 'whisper', 'win32-x64', 'Release')
-      : join(app.getAppPath(), 'resources', 'whisper', 'win32-x64', 'Release')
+      ? join(process.resourcesPath, 'whisper')
+      : join(app.getAppPath(), 'resources', 'whisper')
+  }
+
+  private resourcesWhisperDir(): string {
+    return join(this.whisperRoot(), 'win32-x64', 'Release')
   }
 
   cpuCliPath(): string {
     return join(this.resourcesWhisperDir(), 'whisper-cli.exe')
+  }
+
+  /** Modelo Silero VAD incluido con la app; se usa para ignorar silencios. */
+  vadModelPath(): string {
+    return join(this.whisperRoot(), VAD_FILE_NAME)
+  }
+
+  hasVad(): boolean {
+    return existsSync(this.vadModelPath())
   }
 
   cudaDir(): string {
