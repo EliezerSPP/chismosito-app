@@ -9,7 +9,7 @@ export interface LlmModelOption {
 export const MODEL_LABELS: Record<string, string> = {
   'deepseek-v4.1-flash': 'DeepSeek V4.1 Flash',
   'deepseek-v4-pro': 'DeepSeek V4 Pro',
-  'claude-haiku-5-5': 'Claude Haiku 5.5',
+  'claude-haiku-5.5': 'Claude Haiku 5.5',
   'glm-5.3-flash': 'GLM-5.3-Flash',
   'glm-5.3': 'GLM-5.3',
   'glm-5.2': 'GLM-5.2',
@@ -43,7 +43,7 @@ export const MODEL_LABELS: Record<string, string> = {
 export const FALLBACK_MODEL_IDS: string[] = [
   'deepseek-v4.1-flash',
   'deepseek-v4-pro',
-  'claude-haiku-5-5',
+  'claude-haiku-5.5',
   'glm-5.3-flash',
   'glm-5.3',
   'kimi-k3.1-pro',

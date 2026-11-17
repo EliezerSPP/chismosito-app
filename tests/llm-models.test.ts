@@ -44,7 +44,7 @@ describe('parseModelIds', () => {
 describe('modelLabel', () => {
   it('usa las etiquetas conocidas', () => {
     expect(modelLabel('deepseek-v4.1-flash')).toBe('DeepSeek V4.1 Flash')
-    expect(modelLabel('claude-haiku-5-5')).toBe('Claude Haiku 5.5')
+    expect(modelLabel('claude-haiku-5.5')).toBe('Claude Haiku 5.5')
   })
 
   it('formatea ids desconocidos de forma legible', () => {
@@ -90,6 +90,7 @@ describe('fallbackModelOptions', () => {
     const options = fallbackModelOptions()
     expect(options.length).toBe(FALLBACK_MODEL_IDS.length)
     expect(options[0]).toEqual({ id: 'deepseek-v4.1-flash', label: 'DeepSeek V4.1 Flash' })
+    expect(FALLBACK_MODEL_IDS).toContain('claude-haiku-5.5')
     expect(new Set(FALLBACK_MODEL_IDS).size).toBe(FALLBACK_MODEL_IDS.length)
   })
 })

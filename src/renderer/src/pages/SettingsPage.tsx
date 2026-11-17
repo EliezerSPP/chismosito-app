@@ -126,6 +126,15 @@ export function SettingsPage(): React.JSX.Element {
     setModelsDir(`${appInfo.userData}\\models`)
   }, [appInfo])
 
+  const modelOptions = useMemo<LlmModelOption[]>(() => {
+    const list = modelList?.models ?? []
+    const saved = settings?.llmModel?.trim()
+    if (saved && !list.some((model) => model.id === saved)) {
+      return [...list, { id: saved, label: saved }]
+    }
+    return list
+  }, [modelList, settings?.llmModel])
+
   if (!settings) {
     return (
       <div className="mx-auto max-w-4xl px-8 py-10">
@@ -206,15 +215,6 @@ export function SettingsPage(): React.JSX.Element {
     await window.chismosito.whisper.cancelDownload()
   }
 
-  const modelOptions = useMemo<LlmModelOption[]>(() => {
-    const list = modelList?.models ?? []
-    const saved = settings?.llmModel?.trim()
-    if (saved && !list.some((model) => model.id === saved)) {
-      return [...list, { id: saved, label: saved }]
-    }
-    return list
-  }, [modelList, settings?.llmModel])
-
   const loadModels = async (): Promise<void> => {
     setLoadingModels(true)
     try {
@@ -239,6 +239,9 @@ export function SettingsPage(): React.JSX.Element {
       setLlmTest(null)
       setJevTest(null)
       await refreshEnv()
+      // Reemplazar una key existente no cambia `env.llm.configured`, así que el
+      // efecto que carga la lista no se dispara: la refrescamos aquí.
+      if (env?.llm.configured) void loadModels()
       pushToast('success', 'API key guardada')
     } catch (error) {
       pushToast('error', errorMessage(error))
@@ -831,7 +834,7 @@ export function SettingsPage(): React.JSX.Element {
                   : `Lista local de respaldo (${modelList?.error ?? 'sin conexión'}).`}
               </p>
               <p className="text-[10px] leading-relaxed text-muted">
-                deepseek-v4.1-flash es el más económico; claude-haiku-5-5 el más rápido del plan
+                deepseek-v4.1-flash es el más económico; claude-haiku-5.5 el más rápido del plan
                 Go. Si un modelo aparece bloqueado, actívalo en{' '}
                 <button
                   className="underline underline-offset-2 hover:no-underline"

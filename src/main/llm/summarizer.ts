@@ -220,7 +220,7 @@ export class LlmClient {
         signal: AbortSignal.timeout(15_000)
       })
       if (!response.ok) {
-        throw new Error(`La API respondió ${response.status} al pedir los modelos`)
+        throw new Error(await modelListErrorMessage(response))
       }
       const ids = parseModelIds(await response.json())
       if (ids.length === 0) throw new Error('La API no devolvió modelos')
@@ -550,29 +550,59 @@ export class ChatStreamError extends Error {
   }
 }
 
+/** Mensaje de error HTTP con el detalle del body, si la API devuelve uno. */
+async function modelListErrorMessage(response: Response): Promise<string> {
+  const base = `La API respondió ${response.status} al pedir los modelos`
+  try {
+    const payload = (await response.json()) as {
+      error?: { message?: unknown } | string
+      message?: unknown
+    }
+    const raw =
+      typeof payload.error === 'string' ? payload.error : (payload.error?.message ?? payload.message)
+    const detail = typeof raw === 'string' ? raw.trim().slice(0, 200) : ''
+    return detail ? `${base}: ${detail}` : base
+  } catch {
+    return base
+  }
+}
+
 export function friendlyLlmError(error: unknown): string {
   if (!error) return 'Error desconocido del LLM'
-  if (error instanceof Error && error.message) {
-    const message = error.message
-    if (/model access is disabled/i.test(message)) {
-      const url = message.match(/https:\/\/opencode\.ai\/\S+/)?.[0]?.replace(/[.)]+$/, '')
-      return `El acceso a este modelo está desactivado en tu cuenta de OpenCode. Actívalo en Console → Models${
-        url ? ` (${url})` : ''
-      }.`
-    }
-    if (/model is unavailable/i.test(message)) {
-      return 'El modelo no está disponible en tu cuenta de OpenCode. Actívalo en Console → Models o elige otro modelo en Ajustes.'
-    }
-    if (/401|invalid api key|unauthorized/i.test(message)) {
-      return 'La API key del LLM es inválida o expiró. Revísala en Ajustes → Resumen con LLM.'
-    }
-    if (/429|rate limit/i.test(message)) {
-      return 'El proveedor del LLM está limitando solicitudes. Intenta de nuevo en unos minutos.'
-    }
-    if (/fetch failed|ENOTFOUND|ECONNREFUSED|network/i.test(message)) {
-      return 'No se pudo conectar con el proveedor del LLM. Revisa tu conexión a internet.'
-    }
-    return message
+  const name =
+    typeof error === 'object' && error !== null
+      ? String((error as { name?: unknown }).name ?? '')
+      : ''
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === 'object' && error !== null
+        ? String((error as { message?: unknown }).message ?? error)
+        : String(error)
+  if (!message.trim()) return String(error)
+
+  if (name === 'TimeoutError' || /timeout|timed out|aborted due to timeout/i.test(message)) {
+    return 'El proveedor del LLM tardó demasiado en responder. Revisa tu conexión o vuelve a intentarlo.'
   }
-  return String(error)
+  if (/model access is disabled/i.test(message)) {
+    const url = message.match(/https:\/\/opencode\.ai\/\S+/)?.[0]?.replace(/[.)]+$/, '')
+    return `El acceso a este modelo está desactivado en tu cuenta de OpenCode. Actívalo en Console → Models${
+      url ? ` (${url})` : ''
+    }.`
+  }
+  if (/model is unavailable/i.test(message)) {
+    return 'El modelo no está disponible en tu cuenta de OpenCode. Actívalo en Console → Models o elige otro modelo en Ajustes.'
+  }
+  if (/401|invalid api key|unauthorized/i.test(message)) {
+    return 'La API key del LLM es inválida o expiró. Revísala en Ajustes → Resumen con LLM.'
+  }
+  if (/429|rate limit/i.test(message)) {
+    return 'El proveedor del LLM está limitando solicitudes. Intenta de nuevo en unos minutos.'
+  }
+  if (
+    /fetch failed|ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|network|socket hang up/i.test(message)
+  ) {
+    return 'No se pudo conectar con el proveedor del LLM. Revisa tu conexión a internet.'
+  }
+  return message
 }
